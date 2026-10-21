@@ -31,6 +31,9 @@ else
 fi
 
 rustup target add aarch64-apple-darwin >/dev/null 2>&1 || true
+# Keep the builder's home folder (and so their user name) out of the source
+# paths the binary carries for panic messages.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build"
 (cd "$ROOT/apps/annex-mac-app" && APPLE_SIGNING_IDENTITY="$IDENTITY" "${TAURI[@]}" build --target aarch64-apple-darwin --bundles dmg)
 
 DMG="$(ls -t "$ROOT"/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg | head -1)"
