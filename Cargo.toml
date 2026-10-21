@@ -52,5 +52,10 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
+# Stripped proc-macro dylibs can fail to load on recent macOS (dyld rejects
+# the string pool layout), so only strip the shipped binaries.
+[profile.release.build-override]
+strip = false
+
 [profile.dev.package."*"]
 opt-level = 2
