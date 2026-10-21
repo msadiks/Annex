@@ -266,6 +266,8 @@ pub struct Engine<B: Backend> {
     mac_displays: Vec<MacDisplay>,
     streams: BTreeMap<u64, Stream>,
     force_fast: HashSet<u64>,
+    /// Seconds since start, for periodic stats in the log.
+    seconds: u64,
     shapes: VecDeque<CursorShape>,
     last_cursor: HashMap<u8, CursorPos>,
 
@@ -332,6 +334,7 @@ impl<B: Backend> Engine<B> {
             mac_displays: Vec::new(),
             streams: BTreeMap::new(),
             force_fast: HashSet::new(),
+            seconds: 0,
             shapes: VecDeque::new(),
             last_cursor: HashMap::new(),
             status,
@@ -1044,12 +1047,30 @@ impl<B: Backend> Engine<B> {
         let bytes = std::mem::take(&mut *self.send_meters.bytes.lock().unwrap());
         let mut report = Vec::new();
         let mut reassign = false;
+        self.seconds += 1;
+        let log_stats = self.seconds % 10 == 0;
         for s in self.streams.values_mut() {
             let m = meters.entry(s.stream_id).or_default();
             let encode = m.encode_ms.take();
             let pack = m.pack_ms.take();
             s.fps_sent = m.sent as f32;
             s.encode_ms = encode.unwrap_or(0.0) as f32;
+            if log_stats {
+                let rx = s.rx.as_ref();
+                tracing::info!(
+                    stream = s.stream_id,
+                    mode = s.req.mode.as_str(),
+                    captured = m.captured,
+                    sent = m.sent,
+                    shown = rx.map(|r| r.frames_presented).unwrap_or(0),
+                    pack_ms = format_args!("{:.1}", pack.unwrap_or(0.0)),
+                    encode_ms = format_args!("{:.1}", s.encode_ms),
+                    kbps = bytes.get(&s.stream_id).copied().unwrap_or(0) * 8 / 1000,
+                    lost = rx.map(|r| r.packets_lost).unwrap_or(0),
+                    e2e_ms = format_args!("{:.1}", rx.map(|r| r.e2e_ms).unwrap_or(-1.0)),
+                    "stream stats"
+                );
+            }
             // Spec 4.3: an encoder that can't keep Sharp at 60 fps drops to Fast.
             if s.req.mode == VideoMode::Sharp && s.live.load(Ordering::Relaxed) && encode.unwrap_or(0.0) > SLOW_ENCODE_MS {
                 s.slow_secs += 1;
