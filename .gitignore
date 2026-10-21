@@ -1,0 +1,8 @@
+/target
+**/target
+.DS_Store
+*.swp
+/third_party/ffmpeg-build
+/third_party/ffmpeg-src
+/dist
+node_modules
