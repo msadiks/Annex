@@ -28,6 +28,7 @@ pub type FrameFn = Box<dyn Fn(&CVPixelBuffer, Instant) + Send + Sync>;
 
 pub struct OutputIvars {
     on_frame: FrameFn,
+    display_id: u32,
     rate: Mutex<Rate>,
 }
 
@@ -45,7 +46,7 @@ struct Rate {
 }
 
 impl Rate {
-    fn note(&mut self, complete: bool, shown: Option<Instant>) {
+    fn note(&mut self, display_id: u32, complete: bool, shown: Option<Instant>) {
         let now = Instant::now();
         let since = *self.since.get_or_insert(now);
         if complete {
@@ -62,6 +63,7 @@ impl Rate {
         if now.duration_since(since) >= Duration::from_secs(10) {
             if self.complete >= 10 {
                 tracing::info!(
+                    display_id,
                     complete = self.complete,
                     other = self.other,
                     min_gap_ms = format_args!("{:.1}", self.min_gap),
@@ -100,8 +102,8 @@ define_class!(
 );
 
 impl CaptureOutput {
-    fn new(on_frame: FrameFn) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(OutputIvars { on_frame, rate: Mutex::default() });
+    fn new(display_id: u32, on_frame: FrameFn) -> Retained<Self> {
+        let this = Self::alloc().set_ivars(OutputIvars { on_frame, display_id, rate: Mutex::default() });
         unsafe { msg_send![super(this), init] }
     }
 
@@ -114,7 +116,8 @@ impl CaptureOutput {
             let number = |key: &NSString| info.objectForKey(key).and_then(|v| v.downcast::<NSNumber>().ok());
             let shown = number(SCStreamFrameInfoDisplayTime).map(|n| instant_from_mach(n.unsignedLongLongValue()));
             let complete = number(SCStreamFrameInfoStatus).map(|n| n.integerValue()) == Some(SCFrameStatus::Complete.0);
-            self.ivars().rate.lock().unwrap().note(complete, shown);
+            let ivars = self.ivars();
+            ivars.rate.lock().unwrap().note(ivars.display_id, complete, shown);
             // Idle/blank frames carry no new pixels (spec 6.2: don't synthesize).
             if !complete {
                 return;
@@ -192,7 +195,7 @@ impl Capture {
             if cfg.respondsToSelector(sel!(setPreservesAspectRatio:)) {
                 cfg.setPreservesAspectRatio(true);
             }
-            let output = CaptureOutput::new(on_frame);
+            let output = CaptureOutput::new(display_id, on_frame);
             let stream = SCStream::initWithFilter_configuration_delegate(
                 SCStream::alloc(),
                 &filter,
