@@ -1,5 +1,5 @@
-use std::fs::OpenOptions;
-use std::sync::Mutex;
+use std::fs::{File, OpenOptions, TryLockError};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use annex_proto::control::{ModePref, SourcePref, VideoMode};
@@ -250,8 +250,36 @@ fn init_logging() {
     }
 }
 
+/// The PC takes one session at a time, so two copies of Annex would keep
+/// kicking each other off. Waits a moment in case the last copy is quitting.
+fn another_copy_running() -> bool {
+    static LOCK: OnceLock<File> = OnceLock::new();
+    let path = annex_mac::config_path().with_file_name("annex.lock");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(file) = OpenOptions::new().create(true).truncate(false).write(true).open(&path) else {
+        return false;
+    };
+    for _ in 0..30 {
+        match file.try_lock() {
+            Ok(()) => {
+                let _ = LOCK.set(file);
+                return false;
+            }
+            Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(100)),
+            Err(TryLockError::Error(_)) => return false,
+        }
+    }
+    true
+}
+
 pub fn run() {
     init_logging();
+    if another_copy_running() {
+        tracing::info!("Annex is already running");
+        return;
+    }
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "Annex starting");
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
