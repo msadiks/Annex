@@ -1,0 +1,38 @@
+[package]
+name = "annex-mac"
+description = "Annex Mac sender: virtual displays, ScreenCaptureKit capture, Metal packing, VideoToolbox HEVC encode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "annex-mac-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+annex-proto.workspace = true
+annex-core.workspace = true
+annex-sender.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+crossbeam-channel.workspace = true
+dirs.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-core-video = "0.3"
+objc2-core-media = "0.3"
+objc2-video-toolbox = "0.3"
+objc2-screen-capture-kit = "0.3"
+objc2-metal = "0.3"
+objc2-io-surface = "0.3"
+objc2-app-kit = "0.3"

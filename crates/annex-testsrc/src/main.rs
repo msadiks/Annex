@@ -20,14 +20,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use annex_core::pack::{pack_fast, pack_sharp};
-use annex_proto::control::{CursorShape, MacDisplay, VideoMode};
+use annex_proto::control::{CursorShape, MacDisplay, ModePref, VideoMode};
 use annex_sender::{Backend, CursorSink, Engine, EngineOptions, FrameSink, StreamRequest};
 use anyhow::{Context, bail};
 
 fn usage() -> ! {
     eprintln!(
         "usage:\n  annex-testsrc gen --size WxH --mode sharp|fast --out DIR [--frames N] [--kbps N]\n  \
-         annex-testsrc run --addr HOST[:PORT] --media DIR [--pin PIN] [--video-port N] [--config FILE] [--seconds N]"
+         annex-testsrc run --addr HOST[:PORT] --media DIR [--pin PIN] [--enable 0,1] [--pin-mode sharp|fast]\n                           \
+         [--video-port N] [--config FILE] [--seconds N]"
     );
     std::process::exit(2)
 }
@@ -63,7 +64,12 @@ fn main() -> anyhow::Result<()> {
                 o.manual_video_port = p.parse()?;
             }
             let seconds: Option<u64> = opt("--seconds").map(|v| v.parse()).transpose()?;
-            run(o, media, opt("--pin"), seconds)
+            let enable: Vec<usize> = opt("--enable")
+                .map(|v| v.split(',').map(|i| i.trim().parse()).collect::<Result<_, _>>())
+                .transpose()?
+                .unwrap_or_default();
+            let pin_mode = opt("--pin-mode").map(|m| parse_mode(&m)).transpose()?;
+            run(o, media, opt("--pin"), &enable, pin_mode, seconds)
         }
         _ => usage(),
     }
@@ -359,7 +365,14 @@ fn play(clip: Clip, sink: FrameSink, stop: Arc<AtomicBool>, idr: Arc<AtomicBool>
     }
 }
 
-fn run(opts: EngineOptions, media: PathBuf, pin: Option<String>, seconds: Option<u64>) -> anyhow::Result<()> {
+fn run(
+    opts: EngineOptions,
+    media: PathBuf,
+    pin: Option<String>,
+    enable: &[usize],
+    pin_mode: Option<VideoMode>,
+    seconds: Option<u64>,
+) -> anyhow::Result<()> {
     let backend = TestBackend {
         media,
         players: Arc::default(),
@@ -380,6 +393,27 @@ fn run(opts: EngineOptions, media: PathBuf, pin: Option<String>, seconds: Option
                 }
                 annex_sender::PairingState::Failed(e) => bail!("pairing failed: {e}"),
                 _ => {}
+            }
+        }
+    }
+    // Turn on PC monitors through the protocol, like the Mac menu does.
+    if !enable.is_empty() || pin_mode.is_some() {
+        let wait = Instant::now() + Duration::from_secs(15);
+        while engine.status().monitors.is_empty() && Instant::now() < wait {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let monitors = engine.status().monitors;
+        for (i, m) in monitors.iter().enumerate() {
+            println!("monitor {i}: {} {}x{} @{:.2} Hz{}", m.name, m.native_w, m.native_h, m.refresh_mhz as f64 / 1000.0, if m.primary { " (primary)" } else { "" });
+        }
+        let mode = pin_mode.map(|m| match m {
+            VideoMode::Sharp => ModePref::Sharp,
+            VideoMode::Fast => ModePref::Fast,
+        });
+        for &i in enable {
+            match monitors.get(i) {
+                Some(m) => engine.set_monitor_prefs(m.id, Some(true), mode, None),
+                None => eprintln!("no monitor {i}"),
             }
         }
     }

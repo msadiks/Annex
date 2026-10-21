@@ -101,6 +101,10 @@ impl Shared {
         }
     }
 
+    pub fn has_session(&self) -> bool {
+        self.session.lock().unwrap().is_some()
+    }
+
     /// Installs a new session, closing the previous one.
     pub fn set_session(&self, link: SessionLink) {
         let old = self.session.lock().unwrap().replace(link);

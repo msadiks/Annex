@@ -190,6 +190,10 @@ pub fn run() -> Result<()> {
         quit: false,
     };
     app.refresh_tray();
+    // Unattended testing: show the fixed dev PIN right away.
+    if app.cfg.paired.is_none() && std::env::var_os("ANNEX_DEV_PIN").is_some() {
+        app.start_pairing();
+    }
 
     let mut msg = MSG::default();
     unsafe {

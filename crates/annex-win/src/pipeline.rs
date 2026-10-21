@@ -27,7 +27,7 @@ use crate::gpu::{Gpu, Params};
 use crate::overlay;
 use crate::shared::Shared;
 
-/// Show black after this long without frames (spec 3.4).
+/// Show black this long after the sender is gone (spec 3.4).
 const NO_SIGNAL: Duration = Duration::from_secs(2);
 
 pub struct FrameMsg {
@@ -285,7 +285,8 @@ impl Pipeline {
 
     fn on_tick(&mut self) {
         let now = Instant::now();
-        if !self.black && now.duration_since(self.last_present) > NO_SIGNAL {
+        // A static Mac screen sends no frames; only a lost sender means no signal.
+        if !self.black && now.duration_since(self.last_present) > NO_SIGNAL && !self.shared.has_session() {
             self.last_frame = None;
             self.present_black();
         }
