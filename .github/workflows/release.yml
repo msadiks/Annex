@@ -1,0 +1,87 @@
+name: Release
+
+# Push a tag like v1.0.0 to build both apps and attach them to a draft release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm
+      - name: Cache FFmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-build
+          key: ffmpeg-mingw-${{ hashFiles('tools/ffmpeg/build-mingw.sh') }}
+      - name: Build FFmpeg (trimmed, LGPL)
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: tools/ffmpeg/build-mingw.sh
+      - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win
+      - run: cp target/x86_64-pc-windows-gnu/release/annex.exe Annex.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: Annex.exe
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g @tauri-apps/cli@2
+      - name: Signing secrets
+        # Developer ID signing and notarization. Only secrets that are set are
+        # passed on; without them the app is built unsigned.
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!v}" ]; then
+              { echo "$v<<ANNEX_EOF"; echo "${!v}"; echo "ANNEX_EOF"; } >> "$GITHUB_ENV"
+            fi
+          done
+      - name: Build the .dmg
+        working-directory: apps/annex-mac-app
+        run: tauri build --target aarch64-apple-darwin --bundles dmg
+      - run: cp target/aarch64-apple-darwin/release/bundle/dmg/*.dmg Annex-mac-arm64.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: Annex-mac-arm64.dmg
+
+  publish:
+    needs: [windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            Annex.exe
+            Annex-mac-arm64.dmg

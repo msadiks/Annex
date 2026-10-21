@@ -57,7 +57,7 @@ pub fn machine_name() -> String {
     sysctl_string(c"machdep.cpu.brand_string").unwrap_or_else(|| "Apple silicon".into())
 }
 
-/// The user-visible computer name ("Sadik's MacBook Air" style).
+/// The user-visible computer name ("Alex's MacBook Air" style).
 pub fn computer_name() -> Option<String> {
     unsafe {
         let s = SCDynamicStoreCopyComputerName(std::ptr::null(), std::ptr::null_mut());

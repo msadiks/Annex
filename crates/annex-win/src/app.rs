@@ -541,7 +541,7 @@ impl App {
 
     fn pin_hint(&self, left: Duration) -> String {
         format!(
-            "Enter this PIN on your Mac: Annex menu > Pair with {}.\nExpires in {}:{:02}. Press Esc to cancel.",
+            "Enter this PIN in Annex on your Mac (menu bar > Open Annex…) to pair with {}.\nExpires in {}:{:02}. Press Esc to cancel.",
             self.shared.host_name,
             left.as_secs() / 60,
             left.as_secs() % 60
