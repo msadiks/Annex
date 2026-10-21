@@ -122,7 +122,7 @@ pub struct Capture {
 unsafe impl Send for Capture {}
 
 impl Capture {
-    /// Captures `display_id` scaled to `width × height` BGRA at up to 60 fps.
+    /// Captures `display_id` scaled to `width × height` BGRA at up to 120 fps.
     pub fn start(display_id: u32, width: u32, height: u32, shows_cursor: bool, on_frame: FrameFn) -> anyhow::Result<Self> {
         let display = find_display(display_id)?;
         unsafe {
@@ -131,7 +131,10 @@ impl Capture {
             cfg.setWidth(width as usize);
             cfg.setHeight(height as usize);
             cfg.setPixelFormat(kCVPixelFormatType_32BGRA);
-            cfg.setMinimumFrameInterval(CMTime::new(1, 60));
+            // Asking for exactly 1/60 makes SCK skip every other frame when
+            // they arrive a little early, which halves a 60 Hz display to
+            // ~30 fps. Ask for more and let the backend pace to 60.
+            cfg.setMinimumFrameInterval(CMTime::new(1, 120));
             // Room for the frame kept for keyframe resends, one waiting and two
             // being packed, without starving ScreenCaptureKit.
             cfg.setQueueDepth(6);

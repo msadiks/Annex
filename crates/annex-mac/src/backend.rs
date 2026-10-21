@@ -11,6 +11,7 @@ use annex_core::identity::virtual_display_identity;
 use annex_proto::control::{MacDisplay, StreamSource, VideoMode};
 use annex_sender::{Backend, CursorSink, FrameSink, StreamRequest};
 use anyhow::Context;
+use dispatch2::{DispatchQueue, DispatchRetained, DispatchTime};
 use objc2_core_foundation::CFRetained;
 use objc2_core_video::{CVPixelBuffer, CVPixelBufferPool};
 
@@ -22,6 +23,19 @@ use crate::sys::SendBox;
 use crate::vdisplay::{self, VirtualDisplay};
 
 type PixelBuffer = SendBox<CFRetained<CVPixelBuffer>>;
+
+/// Frames closer together than this wait for the gap to pass. SCK is asked
+/// for up to 120 fps (see capture.rs); this keeps a 120 Hz display at ~60
+/// while frame jitter on a 60 Hz display never delays anything.
+const MIN_GAP: Duration = Duration::from_millis(12);
+
+#[derive(Default)]
+struct Pace {
+    last: Option<Instant>,
+    /// Newest frame that came too soon, sent when the gap has passed.
+    held: Option<(PixelBuffer, Instant)>,
+    armed: bool,
+}
 
 /// Packing + encoding for one mode. Replaced when the mode changes.
 struct Pipe {
@@ -43,12 +57,41 @@ struct Shared {
     /// Newest frame that arrived while the pipe was busy. Sent when a frame
     /// finishes, so the last change before the screen goes static isn't lost.
     pending: Mutex<Option<(PixelBuffer, Instant)>>,
+    pace: Mutex<Pace>,
+    timer: DispatchRetained<DispatchQueue>,
 }
 
 impl Shared {
     fn on_capture(self: &Arc<Self>, src: &CVPixelBuffer, captured: Instant) {
+        let now = Instant::now();
+        let mut pace = self.pace.lock().unwrap();
+        let wait = pace.last.map(|t| (t + MIN_GAP).saturating_duration_since(now)).unwrap_or_default();
+        if !wait.is_zero() {
+            pace.held = Some((SendBox(unsafe { CFRetained::retain(NonNull::from(src)) }), captured));
+            if !pace.armed {
+                pace.armed = true;
+                let this = self.clone();
+                let when = DispatchTime::try_from(wait).unwrap_or(DispatchTime::NOW);
+                let _ = self.timer.after(when, move || this.send_held());
+            }
+            return;
+        }
+        pace.last = Some(now);
+        pace.held = None;
+        drop(pace);
         self.pipe.lock().unwrap().encoder.note_captured();
         self.process(src, captured);
+    }
+
+    fn send_held(self: &Arc<Self>) {
+        let mut pace = self.pace.lock().unwrap();
+        pace.armed = false;
+        if let Some((buf, captured)) = pace.held.take() {
+            pace.last = Some(Instant::now());
+            drop(pace);
+            self.pipe.lock().unwrap().encoder.note_captured();
+            self.process(&buf.0, captured);
+        }
     }
 
     fn process(self: &Arc<Self>, src: &CVPixelBuffer, captured: Instant) {
@@ -181,6 +224,8 @@ impl MacBackend {
             pipe: Mutex::new(pipe),
             last: Mutex::new(None),
             pending: Mutex::new(None),
+            pace: Mutex::new(Pace::default()),
+            timer: DispatchQueue::new("annex.pace", None),
         });
         let cb = shared.clone();
         let capture = Capture::start(
