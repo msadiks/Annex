@@ -22,12 +22,12 @@ present 0–8.
 
 | | |
 | --- | --- |
-| Mac | |
-| macOS | |
-| PC GPU | |
+| Mac | MacBook Air, Apple M3 |
+| macOS | 27 |
+| PC GPU | AMD Radeon RX 6700 |
 | Windows | |
-| Network | |
-| Annex version | |
+| Network | Mac on 5 GHz Wi-Fi (802.11ax, 80 MHz, −68 dBm); PC on the same LAN |
+| Annex version | 1.0.0 (pre-release builds, October 2026) |
 
 ## Latency (1080p60)
 
@@ -35,8 +35,8 @@ present 0–8.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Ethernet | Sharp | | | | | | |
 | Ethernet | Fast | | | | | | |
-| Wi-Fi 5 GHz | Sharp | | | | | | |
-| Wi-Fi 5 GHz | Fast | | | | | | |
+| Wi-Fi 5 GHz | Sharp | 25–31 | | 21 | | 0 | Encoder sends ~47 of 60 fps at full motion, so Auto lowers it to Fast |
+| Wi-Fi 5 GHz | Fast | 10–18 | | 6–9 | | 0–0.03 | Extend 60 fps: 10–13 ms; mirror of the built-in display: 16–18 ms |
 
 ## Encoder budget
 
@@ -46,7 +46,8 @@ these results.
 
 | Streams | Modes | Sustained fps per stream | Encode ms (worst) | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | Sharp | | | |
+| 1 | Sharp | ~47 (M3) | 21 | 3840×2160 doubled frame; holds at 30 fps content |
+| 1 | Fast | 60 (M3) | 7 | 1920×1080 |
 | 2 | Sharp + Fast | | | |
 | 3 | Sharp + Fast + Fast | | | |
 | 3 | Fast ×3 | | | |

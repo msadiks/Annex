@@ -31,7 +31,8 @@ pub struct OutputIvars {
     rate: Mutex<Rate>,
 }
 
-/// What ScreenCaptureKit delivers, logged every 10 s while frames arrive.
+/// What ScreenCaptureKit delivers, logged every 10 s while the display is
+/// changing.
 #[derive(Default)]
 struct Rate {
     since: Option<Instant>,
@@ -59,7 +60,7 @@ impl Rate {
             self.other += 1;
         }
         if now.duration_since(since) >= Duration::from_secs(10) {
-            if self.complete > 0 {
+            if self.complete >= 10 {
                 tracing::info!(
                     complete = self.complete,
                     other = self.other,
