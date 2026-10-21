@@ -116,27 +116,27 @@ cargo run --release -p annex-testsrc -- run --addr <pc-ip> --media media --pin <
 
 ### Signing and releases
 
-Push a tag such as `v1.0.0` and the *Release* workflow builds `Annex.exe` and
-`Annex-mac-arm64.dmg` and attaches them to a draft GitHub release.
+Push a tag such as `v1.0.0` and the *Release* workflow builds `Annex.exe` into
+a draft GitHub release.
 
-To sign and notarize the Mac app with a Developer ID, add these repository
-secrets (Settings › Secrets and variables › Actions):
+The Mac app is signed and notarized on a Mac, so Apple credentials never go to
+GitHub. Once, store a notarization profile (it asks for an app-specific
+password and keeps it in the keychain):
 
-| Secret | Value |
-| --- | --- |
-| `APPLE_CERTIFICATE` | Your *Developer ID Application* certificate exported as .p12, base64-encoded (`base64 -i cert.p12`) |
-| `APPLE_CERTIFICATE_PASSWORD` | The .p12 export password |
-| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
-| `APPLE_ID` | The Apple ID used for notarization |
-| `APPLE_PASSWORD` | An app-specific password for that Apple ID |
-| `APPLE_TEAM_ID` | Your 10-character team ID |
+```sh
+xcrun notarytool store-credentials annex --apple-id <apple id> --team-id <team id>
+```
 
-Without them the workflow still produces an unsigned .dmg. macOS ties the
-Screen Recording permission to the signing identity, so builds signed with
-the same identity keep the permission across updates; unsigned builds lose
-it on every rebuild. For self-use without a Developer ID, a self-signed
-code-signing certificate made in Keychain Access works too: sign with
-`codesign --force --deep -s "Annex Dev" Annex.app`.
+Then for each release, with a *Developer ID Application* certificate in the
+keychain:
+
+```sh
+tools/mac/release.sh        # writes dist/Annex-mac-arm64.dmg, notarized and stapled
+```
+
+and attach `dist/Annex-mac-arm64.dmg` to the draft release. macOS ties the
+Screen Recording permission to the signing identity, so builds signed with the
+same certificate keep the permission across updates.
 
 ## Licence
 
