@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Annex finds your Windows PC on the local network and streams your displays to it.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_annex._tcp</string>
+    <string>_annex._udp</string>
+  </array>
+</dict>
+</plist>

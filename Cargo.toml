@@ -7,7 +7,7 @@ members = [
     "crates/annex-mac",
     "crates/annex-win",
     "crates/annex-testsrc",
-    #"apps/annex-mac-app",
+    "apps/annex-mac-app",
 ]
 default-members = ["crates/annex-proto", "crates/annex-core", "crates/annex-sender", "crates/annex-testsrc"]
 

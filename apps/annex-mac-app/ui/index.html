@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Annex</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Annex</h1>
+    <span id="state" class="pill">…</span>
+  </header>
+
+  <section id="perm" class="banner" hidden>
+    <p><strong>Screen Recording permission is needed.</strong> Annex captures the displays it streams to your PC.
+      Allow Annex in System Settings, then quit and reopen Annex.</p>
+    <button id="perm-open">Open System Settings</button>
+  </section>
+
+  <section id="pairing" hidden>
+    <h2>Pair with your PC</h2>
+    <p class="hint">On the PC, open the Annex tray menu and choose <em>Pair with a Mac…</em>. Then enter the PIN it shows.</p>
+    <div id="found"></div>
+    <form id="pair-form">
+      <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123 456" aria-label="PIN">
+      <button type="submit">Pair</button>
+    </form>
+    <p id="pair-result" class="hint"></p>
+  </section>
+
+  <section id="displays" hidden>
+    <h2>PC monitors</h2>
+    <p class="hint">Turn a monitor on to plug it in as a Mac display.</p>
+    <div id="monitors"></div>
+  </section>
+
+  <section id="options">
+    <h2>Options</h2>
+    <label class="row"><input type="checkbox" id="cursor"> Draw the pointer on the PC (feels more immediate)</label>
+    <label class="row"><input type="checkbox" id="autostart"> Start Annex at login</label>
+  </section>
+
+  <footer>
+    <p id="message" class="hint"></p>
+    <p id="peer" class="hint"></p>
+    <button id="forget" class="link" hidden>Forget this PC</button>
+    <button id="repair" class="link" hidden>Pair with a different PC</button>
+    <p id="version" class="hint"></p>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>
