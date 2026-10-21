@@ -1,0 +1,19 @@
+[package]
+name = "annex-testsrc"
+description = "Test sender: plays pre-encoded HEVC to an Annex receiver, so the PC side can be checked without a Mac"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+annex-proto.workspace = true
+annex-core.workspace = true
+annex-sender.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+font8x8 = { version = "0.3", default-features = false }

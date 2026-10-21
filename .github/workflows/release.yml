@@ -1,0 +1,53 @@
+name: Release
+
+# Push a tag like v1.0.0 to build Annex.exe into a draft release. The Mac .dmg
+# is signed and notarized on a Mac with tools/mac/release.sh and added to the
+# same draft, so no Apple credentials live in GitHub.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm
+      - name: Cache FFmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-build
+          key: ffmpeg-mingw-${{ hashFiles('tools/ffmpeg/build-mingw.sh') }}
+      - name: Build FFmpeg (trimmed, LGPL)
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: tools/ffmpeg/build-mingw.sh
+      - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win
+      - run: cp target/x86_64-pc-windows-gnu/release/annex.exe Annex.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: Annex.exe
+
+  publish:
+    needs: [windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: Annex.exe

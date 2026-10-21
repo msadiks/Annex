@@ -1,0 +1,30 @@
+[package]
+name = "annex-mac-app"
+description = "Annex menu bar app for macOS (Tauri shell around annex-mac)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "annex"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+annex-mac.workspace = true
+annex-sender.workspace = true
+annex-proto.workspace = true
+annex-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json = "1"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"

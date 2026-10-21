@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Protocol and core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p annex-proto -p annex-core -p annex-sender
+
+  windows:
+    name: Windows receiver (cross-built)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm
+      - name: Cache FFmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-build
+          key: ffmpeg-mingw-${{ hashFiles('tools/ffmpeg/build-mingw.sh') }}
+      - name: Build FFmpeg (trimmed, LGPL)
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: tools/ffmpeg/build-mingw.sh
+      - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win -p annex-testsrc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: annex-windows
+          path: |
+            target/x86_64-pc-windows-gnu/release/annex.exe
+            target/x86_64-pc-windows-gnu/release/annex-testsrc.exe
+
+  mac:
+    name: Mac sender and app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p annex-mac -p annex-mac-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: annex-mac-cli
+          path: target/release/annex-mac-cli

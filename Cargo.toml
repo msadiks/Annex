@@ -1,0 +1,61 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/annex-proto",
+    "crates/annex-core",
+    "crates/annex-sender",
+    "crates/annex-mac",
+    "crates/annex-win",
+    "crates/annex-testsrc",
+    "apps/annex-mac-app",
+]
+default-members = ["crates/annex-proto", "crates/annex-core", "crates/annex-sender", "crates/annex-testsrc"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/msadiks/annex-app"
+authors = ["Annex contributors"]
+
+[workspace.dependencies]
+annex-proto = { path = "crates/annex-proto" }
+annex-core = { path = "crates/annex-core" }
+annex-mac = { path = "crates/annex-mac" }
+annex-sender = { path = "crates/annex-sender" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.1", features = ["use-std"] }
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+crossbeam-channel = "0.5"
+socket2 = { version = "0.6", features = ["all"] }
+mdns-sd = "0.21"
+snow = { version = "0.10", default-features = false, features = ["default-resolver", "use-chacha20poly1305", "use-blake2", "use-sha2", "use-curve25519", "use-getrandom", "risky-raw-split"] }
+chacha20poly1305 = "0.10"
+reed-solomon-simd = "3.1"
+spake2 = "0.4"
+hkdf = "0.12"
+sha2 = "0.10"
+getrandom = "0.3"
+dirs = "7"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+# Stripped proc-macro dylibs can fail to load on recent macOS (dyld rejects
+# the string pool layout), so only strip the shipped binaries.
+[profile.release.build-override]
+strip = false
+
+[profile.dev.package."*"]
+opt-level = 2
