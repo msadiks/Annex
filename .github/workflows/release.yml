@@ -1,12 +1,18 @@
 name: Release
 
-# Push a tag like v1.0.0 to build Annex.exe into a draft release. The Mac .dmg
-# is signed and notarized on a Mac with tools/mac/release.sh and added to the
-# same draft, so no Apple credentials live in GitHub.
+# Push a tag like v1.0.0, or run this workflow by hand with a tag name, to
+# build Annex.exe into a draft release (a new tag is created on the built
+# commit when the draft is published). The Mac .dmg is signed and notarized on
+# a Mac with tools/mac/release.sh and added to the same draft, so no Apple
+# credentials live in GitHub.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v1.0.0"
+        required: true
 
 permissions:
   contents: write
@@ -49,5 +55,7 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           draft: true
           files: Annex.exe
