@@ -27,6 +27,8 @@ pub struct ReceiverAd {
 pub struct DiscoveredReceiver {
     pub id: String,
     pub name: String,
+    /// mDNS host name, e.g. `PC.local.`
+    pub host: String,
     pub addrs: Vec<IpAddr>,
     pub control_port: u16,
     pub video_port: u16,
@@ -138,6 +140,7 @@ impl Browser {
                     let rec = DiscoveredReceiver {
                         id,
                         name: get("name").unwrap_or_else(|| svc.host.trim_end_matches('.').to_string()),
+                        host: svc.host.clone(),
                         addrs,
                         control_port: get("cp").and_then(|p| p.parse().ok()).unwrap_or(svc.port),
                         video_port: get("vp")

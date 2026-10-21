@@ -4,7 +4,7 @@
 //! and pairing run on helper threads and report back as events.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,7 +21,8 @@ use annex_proto::control::{
 };
 use annex_proto::crypto::PacketCipher;
 use annex_proto::cursor::{self, CursorPos};
-use annex_proto::discovery::Browser;
+use annex_proto::addr::is_lan_addr;
+use annex_proto::discovery::{Browser, DiscoveredReceiver};
 use annex_proto::framing::secure_pair;
 use annex_proto::pairing::{self, PairError, PeerIdentity};
 use annex_proto::{APP_VERSION, DEFAULT_VIDEO_PORT, MAX_STREAMS, PROTO_VERSION, noise};
@@ -482,7 +483,7 @@ impl<B: Backend> Engine<B> {
 
     fn start_pairing(&mut self, receiver_id: Option<String>, pin: String) {
         let target = if let Some(a) = self.opts.manual_receiver {
-            Some(vec![a])
+            Some((vec![a.ip()], None, a.port()))
         } else {
             self.browser.as_mut().map(|b| {
                 b.poll();
@@ -496,7 +497,7 @@ impl<B: Backend> Engine<B> {
                     if pairing.len() == 1 { pairing.into_iter().next() } else { found.into_iter().find(|r| r.pairing) }
                 }
             };
-            pick.map(|r| r.addrs.iter().map(|ip| SocketAddr::new(*ip, r.control_port)).collect())
+            pick.map(|r| (r.addrs, Some(r.host), r.control_port))
         };
         let Some(addrs) = target else {
             self.st.pairing = PairingState::Failed("No PC in pairing mode found. Choose \"Pair with a Mac\" on the PC first.".into());
@@ -507,8 +508,10 @@ impl<B: Backend> Engine<B> {
         let ev = self.ev_tx.clone();
         std::thread::spawn(move || {
             let mut last = String::from("could not reach the PC");
-            let mut addrs = addrs;
-            addrs.sort_by_key(|a: &SocketAddr| !a.is_ipv4());
+            let addrs: Vec<SocketAddr> = match addrs {
+                (ips, Some(host), port) => candidate_ips(&ips, &host).into_iter().map(|ip| SocketAddr::new(ip, port)).collect(),
+                (ips, None, port) => ips.into_iter().map(|ip| SocketAddr::new(ip, port)).collect(),
+            };
             for a in addrs {
                 let mut s = match TcpStream::connect_timeout(&a, CONNECT_TIMEOUT) {
                     Ok(s) => s,
@@ -985,17 +988,11 @@ impl<B: Backend> Engine<B> {
 
     fn try_connect(&mut self) {
         let Some(peer) = self.cfg.paired.clone() else { return };
-        let targets: Vec<(SocketAddr, SocketAddr)> = if let Some(a) = self.opts.manual_receiver {
-            vec![(a, SocketAddr::new(a.ip(), self.opts.manual_video_port))]
+        let targets = if let Some(a) = self.opts.manual_receiver {
+            Targets::Manual(vec![(a, SocketAddr::new(a.ip(), self.opts.manual_video_port))])
         } else {
             match self.browser.as_ref().and_then(|b| b.find(&peer.id)) {
-                Some(r) => {
-                    let mut ips = r.addrs.clone();
-                    ips.sort_by_key(|a| !a.is_ipv4());
-                    ips.into_iter()
-                        .map(|ip| (SocketAddr::new(ip, r.control_port), SocketAddr::new(ip, r.video_port)))
-                        .collect()
-                }
+                Some(r) => Targets::Found(r),
                 None => {
                     self.next_connect = Instant::now() + Duration::from_secs(1);
                     return;
@@ -1007,12 +1004,21 @@ impl<B: Backend> Engine<B> {
         let ev = self.ev_tx.clone();
         let name = peer.name.clone();
         std::thread::spawn(move || {
-            let mut last = String::from("PC not reachable");
+            let targets: Vec<(SocketAddr, SocketAddr)> = match targets {
+                Targets::Manual(t) => t,
+                Targets::Found(r) => candidate_ips(&r.addrs, &r.host)
+                    .into_iter()
+                    .map(|ip| (SocketAddr::new(ip, r.control_port), SocketAddr::new(ip, r.video_port)))
+                    .collect(),
+            };
+            // Report the failure of the best address, not of the last fallback.
+            let mut first: Option<String> = None;
             for (ctl, video) in targets {
                 let mut s = match TcpStream::connect_timeout(&ctl, CONNECT_TIMEOUT) {
                     Ok(s) => s,
                     Err(e) => {
-                        last = format!("PC not reachable: {e}");
+                        tracing::debug!(%ctl, "connect failed: {e}");
+                        first.get_or_insert_with(|| format!("PC not reachable at {}: {e}", ctl.ip()));
                         continue;
                     }
                 };
@@ -1023,10 +1029,13 @@ impl<B: Backend> Engine<B> {
                         let _ = ev.send(Ev::Connected { stream: s, hs: Box::new(hs), video, name });
                         return;
                     }
-                    Err(e) => last = format!("The PC refused the connection ({e}). If it was reset, pair again."),
+                    Err(e) => {
+                        let _ = ev.send(Ev::ConnectFailed(format!("The PC refused the connection ({e}). If it was reset, pair again.")));
+                        return;
+                    }
                 }
             }
-            let _ = ev.send(Ev::ConnectFailed(last));
+            let _ = ev.send(Ev::ConnectFailed(first.unwrap_or_else(|| "PC not reachable".into())));
         });
     }
 
@@ -1091,6 +1100,35 @@ impl<B: Backend> Engine<B> {
             self.publish();
         }
     }
+}
+
+/// Where to connect: a typed-in address, or a PC found over mDNS.
+enum Targets {
+    Manual(Vec<(SocketAddr, SocketAddr)>),
+    Found(DiscoveredReceiver),
+}
+
+/// Addresses to try for a PC found over mDNS, best first. Runs off the engine
+/// thread because it may block on the system resolver.
+///
+/// The receiver listens on IPv4 only. mDNS answers can arrive piecemeal, so a
+/// PC may be known by its IPv6 addresses alone for a while; asking the system
+/// resolver for its host name fills in the IPv4 address. Real LAN addresses
+/// go before the 169.254.x.x addresses of the PC's unconnected adapters.
+fn candidate_ips(addrs: &[IpAddr], host: &str) -> Vec<IpAddr> {
+    let mut ips: Vec<IpAddr> = addrs.iter().copied().filter(IpAddr::is_ipv4).collect();
+    let routable = |ip: &IpAddr| matches!(ip, IpAddr::V4(v4) if !v4.is_link_local());
+    if !ips.iter().any(routable)
+        && let Ok(resolved) = (host.trim_end_matches('.'), 0).to_socket_addrs()
+    {
+        for ip in resolved.map(|a| a.ip()) {
+            if ip.is_ipv4() && is_lan_addr(ip) && !ips.contains(&ip) {
+                ips.push(ip);
+            }
+        }
+    }
+    ips.sort_by_key(|ip| !routable(ip));
+    ips
 }
 
 fn same_picture(a: &StreamRequest, b: &StreamRequest) -> bool {
