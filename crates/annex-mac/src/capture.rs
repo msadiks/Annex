@@ -132,7 +132,9 @@ impl Capture {
             cfg.setHeight(height as usize);
             cfg.setPixelFormat(kCVPixelFormatType_32BGRA);
             cfg.setMinimumFrameInterval(CMTime::new(1, 60));
-            cfg.setQueueDepth(4);
+            // Room for the frame kept for keyframe resends, one waiting and two
+            // being packed, without starving ScreenCaptureKit.
+            cfg.setQueueDepth(6);
             cfg.setShowsCursor(shows_cursor);
             cfg.setColorSpaceName(kCGColorSpaceSRGB);
             if cfg.respondsToSelector(sel!(setCaptureResolution:)) {

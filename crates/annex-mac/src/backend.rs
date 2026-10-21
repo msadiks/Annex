@@ -40,14 +40,22 @@ struct Shared {
     /// Last captured picture, so a keyframe can be sent while the screen is
     /// static (SCK sends nothing then).
     last: Mutex<Option<PixelBuffer>>,
+    /// Newest frame that arrived while the pipe was busy. Sent when a frame
+    /// finishes, so the last change before the screen goes static isn't lost.
+    pending: Mutex<Option<(PixelBuffer, Instant)>>,
 }
 
 impl Shared {
-    fn process(&self, src: &CVPixelBuffer, captured: Instant) {
+    fn on_capture(self: &Arc<Self>, src: &CVPixelBuffer, captured: Instant) {
+        self.pipe.lock().unwrap().encoder.note_captured();
+        self.process(src, captured);
+    }
+
+    fn process(self: &Arc<Self>, src: &CVPixelBuffer, captured: Instant) {
         let pipe = self.pipe.lock().unwrap().clone();
-        pipe.encoder.note_captured();
-        // Never queue up behind a slow GPU or encoder: drop instead.
+        // Never queue up behind a slow GPU or encoder: keep only the newest.
         if pipe.inflight.load(Ordering::Acquire) >= 2 {
+            *self.pending.lock().unwrap() = Some((SendBox(unsafe { CFRetained::retain(NonNull::from(src)) }), captured));
             return;
         }
         let mut dst: *mut CVPixelBuffer = std::ptr::null_mut();
@@ -61,12 +69,17 @@ impl Shared {
         pipe.inflight.fetch_add(1, Ordering::AcqRel);
         let started = Instant::now();
         let p = pipe.clone();
+        let this = self.clone();
         let dst_for_gpu = SendBox(dst.0.clone());
         let r = self.packer.pack(pipe.mode, src, self.width as usize, self.height as usize, &dst.0, move || {
             let (_src, dst) = (&src_keep, &dst_for_gpu);
             let pack_ms = started.elapsed().as_secs_f64() * 1e3;
             p.encoder.encode(&dst.0, captured, pack_ms);
             p.inflight.fetch_sub(1, Ordering::AcqRel);
+            let next = this.pending.lock().unwrap().take();
+            if let Some((buf, t)) = next {
+                this.process(&buf.0, t);
+            }
         });
         if let Err(e) = r {
             pipe.inflight.fetch_sub(1, Ordering::AcqRel);
@@ -77,7 +90,7 @@ impl Shared {
     }
 
     /// Re-sends the last picture (as a keyframe if one was requested).
-    fn resend(&self) {
+    fn resend(self: &Arc<Self>) {
         let last = self.last.lock().unwrap().as_ref().map(|b| SendBox(b.0.clone()));
         let idle = self.pipe.lock().unwrap().inflight.load(Ordering::Acquire) == 0;
         if let (Some(src), true) = (last, idle) {
@@ -167,6 +180,7 @@ impl MacBackend {
             packer: self.packer.clone(),
             pipe: Mutex::new(pipe),
             last: Mutex::new(None),
+            pending: Mutex::new(None),
         });
         let cb = shared.clone();
         let capture = Capture::start(
@@ -174,7 +188,7 @@ impl MacBackend {
             req.width,
             req.height,
             !self.client_cursor,
-            Box::new(move |buf, t| cb.process(buf, t)),
+            Box::new(move |buf, t| cb.on_capture(buf, t)),
         )?;
         Ok(MacStream { req: req.clone(), display_id, shared, capture: Some(capture), vdisplay })
     }
