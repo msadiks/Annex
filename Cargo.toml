@@ -3,12 +3,13 @@ resolver = "3"
 members = [
     "crates/annex-proto",
     "crates/annex-core",
+    "crates/annex-sender",
     #"crates/annex-mac",
-    #"crates/annex-win",
-    #"crates/annex-testsrc",
+    "crates/annex-win",
+    "crates/annex-testsrc",
     #"apps/annex-mac-app",
 ]
-default-members = ["crates/annex-proto", "crates/annex-core"]
+default-members = ["crates/annex-proto", "crates/annex-core", "crates/annex-sender", "crates/annex-testsrc"]
 
 [workspace.package]
 version = "1.0.0"
@@ -22,6 +23,7 @@ authors = ["Annex contributors"]
 annex-proto = { path = "crates/annex-proto" }
 annex-core = { path = "crates/annex-core" }
 annex-mac = { path = "crates/annex-mac" }
+annex-sender = { path = "crates/annex-sender" }
 
 anyhow = "1"
 thiserror = "2"
