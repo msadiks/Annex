@@ -1,5 +1,6 @@
 //! ScreenCaptureKit display capture (spec 6.2).
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
@@ -27,6 +28,49 @@ pub type FrameFn = Box<dyn Fn(&CVPixelBuffer, Instant) + Send + Sync>;
 
 pub struct OutputIvars {
     on_frame: FrameFn,
+    rate: Mutex<Rate>,
+}
+
+/// What ScreenCaptureKit delivers, logged every 10 s while frames arrive.
+#[derive(Default)]
+struct Rate {
+    since: Option<Instant>,
+    complete: u32,
+    other: u32,
+    last_shown: Option<Instant>,
+    /// Spacing of the display times of complete frames, in ms.
+    min_gap: f64,
+    max_gap: f64,
+}
+
+impl Rate {
+    fn note(&mut self, complete: bool, shown: Option<Instant>) {
+        let now = Instant::now();
+        let since = *self.since.get_or_insert(now);
+        if complete {
+            self.complete += 1;
+            if let (Some(a), Some(b)) = (self.last_shown, shown) {
+                let gap = b.saturating_duration_since(a).as_secs_f64() * 1e3;
+                self.min_gap = if self.complete == 2 { gap } else { self.min_gap.min(gap) };
+                self.max_gap = self.max_gap.max(gap);
+            }
+            self.last_shown = shown;
+        } else {
+            self.other += 1;
+        }
+        if now.duration_since(since) >= Duration::from_secs(10) {
+            if self.complete > 0 {
+                tracing::info!(
+                    complete = self.complete,
+                    other = self.other,
+                    min_gap_ms = format_args!("{:.1}", self.min_gap),
+                    max_gap_ms = format_args!("{:.1}", self.max_gap),
+                    "capture rate (10 s)"
+                );
+            }
+            *self = Rate::default();
+        }
+    }
 }
 
 define_class!(
@@ -56,7 +100,7 @@ define_class!(
 
 impl CaptureOutput {
     fn new(on_frame: FrameFn) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(OutputIvars { on_frame });
+        let this = Self::alloc().set_ivars(OutputIvars { on_frame, rate: Mutex::default() });
         unsafe { msg_send![super(this), init] }
     }
 
@@ -67,13 +111,14 @@ impl CaptureOutput {
             let arr: &NSArray<NSDictionary<NSString, AnyObject>> = &*(CFRetained::as_ptr(&arr).as_ptr() as *const _);
             let Some(info) = arr.firstObject() else { return };
             let number = |key: &NSString| info.objectForKey(key).and_then(|v| v.downcast::<NSNumber>().ok());
+            let shown = number(SCStreamFrameInfoDisplayTime).map(|n| instant_from_mach(n.unsignedLongLongValue()));
+            let complete = number(SCStreamFrameInfoStatus).map(|n| n.integerValue()) == Some(SCFrameStatus::Complete.0);
+            self.ivars().rate.lock().unwrap().note(complete, shown);
             // Idle/blank frames carry no new pixels (spec 6.2: don't synthesize).
-            if number(SCStreamFrameInfoStatus).map(|n| n.integerValue()) != Some(SCFrameStatus::Complete.0) {
+            if !complete {
                 return;
             }
-            let captured = number(SCStreamFrameInfoDisplayTime)
-                .map(|n| instant_from_mach(n.unsignedLongLongValue()))
-                .unwrap_or_else(Instant::now);
+            let captured = shown.unwrap_or_else(Instant::now);
             let Some(img) = sample.image_buffer() else { return };
             (self.ivars().on_frame)(&img, captured);
         }
