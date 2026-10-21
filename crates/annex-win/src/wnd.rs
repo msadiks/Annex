@@ -84,10 +84,6 @@ unsafe extern "system" fn pin_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 cancel_pairing();
                 LRESULT(0)
             }
-            WM_LBUTTONDOWN | WM_RBUTTONDOWN => {
-                cancel_pairing();
-                LRESULT(0)
-            }
             WM_ERASEBKGND => LRESULT(1),
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
