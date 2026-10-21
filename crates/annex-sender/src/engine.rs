@@ -38,8 +38,10 @@ const SESSION_TIMEOUT: Duration = Duration::from_secs(4);
 /// Virtual displays survive a dropped connection this long (spec 3.4).
 const GRACE: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
-/// Sharp is lowered to Fast after this many seconds of encodes over budget.
-const SLOW_ENCODE_MS: f64 = 14.0;
+/// Sharp is lowered to Fast after this many seconds in a row of the encoder
+/// not keeping up: frames skipped while busy, or encodes so slow a queue
+/// builds. A long but pipelined encode alone is fine.
+const SLOW_ENCODE_MS: f64 = 33.0;
 const SLOW_SECS: u32 = 3;
 const MAX_SHAPES: usize = 32;
 
@@ -1072,10 +1074,12 @@ impl<B: Backend> Engine<B> {
                 );
             }
             // Spec 4.3: an encoder that can't keep Sharp at 60 fps drops to Fast.
-            if s.req.mode == VideoMode::Sharp && s.live.load(Ordering::Relaxed) && encode.unwrap_or(0.0) > SLOW_ENCODE_MS {
+            let skipping = m.captured >= 20 && m.sent * 10 < m.captured * 9;
+            let slow = skipping || encode.unwrap_or(0.0) > SLOW_ENCODE_MS;
+            if s.req.mode == VideoMode::Sharp && s.live.load(Ordering::Relaxed) && slow {
                 s.slow_secs += 1;
                 if s.slow_secs == SLOW_SECS && self.force_fast.insert(s.req.monitor_id) {
-                    tracing::warn!(stream = s.stream_id, encode_ms = s.encode_ms, "encoder too slow for Sharp");
+                    tracing::warn!(stream = s.stream_id, encode_ms = s.encode_ms, captured = m.captured, sent = m.sent, "encoder too slow for Sharp");
                     reassign = true;
                 }
             } else {
