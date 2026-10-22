@@ -6,12 +6,14 @@
 
 use std::time::{Duration, Instant};
 
+use annex_core::identity::VENDOR_ID;
 use anyhow::{Context, bail};
 use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{msg_send, sel};
 use objc2_core_foundation::CGSize;
+use objc2_core_graphics::CGDisplayUnitNumber;
 use objc2_foundation::{NSArray, NSString};
 
 const CLASSES: [(&std::ffi::CStr, &[&str]); 4] = [
@@ -50,6 +52,10 @@ pub fn probe() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// Identity of the short-lived display [`VirtualDisplay::create_distinct`]
+/// makes so macOS moves on to another unit number.
+const SPACER: (u32, u32, u32) = (VENDOR_ID, 0xC000, 1);
 
 /// One virtual display. Dropping it unplugs the display.
 pub struct VirtualDisplay {
@@ -104,6 +110,43 @@ impl VirtualDisplay {
             Ok(VirtualDisplay { obj, _queue: queue, id })
         }
     }
+
+    /// Like [`VirtualDisplay::create`], but no other display has the new
+    /// one's unit number. macOS numbers a new display by how many there are,
+    /// so one made after another virtual display went can get the number of
+    /// one still there, and ScreenCaptureKit then gives live captures of
+    /// either the same picture. Made again while a spacer display is up, it
+    /// gets a number of its own.
+    pub fn create_distinct(name: &str, width: u32, height: u32, identity: (u32, u32, u32)) -> anyhow::Result<Self> {
+        let vd = Self::create(name, width, height, identity)?;
+        vd.wait_online();
+        if !crate::displays::shares_unit(vd.id) {
+            return Ok(vd);
+        }
+        tracing::info!(id = vd.id, unit = CGDisplayUnitNumber(vd.id), "virtual display shares its unit number; making it again");
+        let old = vd.id;
+        drop(vd);
+        wait_gone(old, Duration::from_secs(2));
+        let spacer = Self::create("Annex", 640, 480, SPACER)?;
+        spacer.wait_online();
+        let vd = Self::create(name, width, height, identity)?;
+        vd.wait_online();
+        drop(spacer);
+        let unit = CGDisplayUnitNumber(vd.id);
+        if crate::displays::shares_unit(vd.id) {
+            tracing::warn!(id = vd.id, unit, "virtual display still shares its unit number");
+        } else {
+            tracing::info!(id = vd.id, unit, "virtual display has a unit number of its own");
+        }
+        Ok(vd)
+    }
+
+    fn wait_online(&self) {
+        let until = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < until && !crate::displays::online_ids().contains(&self.id) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 impl Drop for VirtualDisplay {
@@ -114,11 +157,11 @@ impl Drop for VirtualDisplay {
     }
 }
 
-/// Waits until `display_id` has left the active display list (destruction
+/// Waits until `display_id` has left the online display list (destruction
 /// is asynchronous, spec 6.1), so its identity can be reused.
 pub fn wait_gone(display_id: u32, timeout: Duration) {
     let until = Instant::now() + timeout;
-    while Instant::now() < until && crate::displays::active_ids().contains(&display_id) {
+    while Instant::now() < until && crate::displays::online_ids().contains(&display_id) {
         std::thread::sleep(Duration::from_millis(50));
     }
 }

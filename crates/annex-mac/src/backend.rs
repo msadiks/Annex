@@ -220,7 +220,7 @@ impl MacBackend {
         if let Some(old) = self.retired.remove(&identity) {
             vdisplay::wait_gone(old, Duration::from_secs(2));
         }
-        VirtualDisplay::create(&name, req.width, req.height, identity)
+        VirtualDisplay::create_distinct(&name, req.width, req.height, identity)
     }
 
     fn create(&mut self, req: &StreamRequest, sink: FrameSink) -> anyhow::Result<MacStream> {
@@ -285,17 +285,43 @@ impl MacBackend {
             if !plain_mirror || s.display_id == target {
                 continue;
             }
-            s.capture.take();
-            let cb = s.shared.clone();
-            match Capture::start(target, s.req.width, s.req.height, shows_cursor, Box::new(move |buf, t| cb.on_capture(buf, t))) {
-                Ok(c) => {
-                    s.capture = Some(c);
-                    s.display_id = target;
-                }
-                Err(e) => tracing::warn!(stream = stream_id, "could not follow the mirrored display: {e:#}"),
+            if let Err(e) = s.recapture(target, shows_cursor) {
+                tracing::warn!(stream = stream_id, "could not follow the mirrored display: {e:#}");
             }
         }
         self.update_cursor();
+    }
+
+    /// Waits for macOS to finish rearranging displays after a virtual display
+    /// came or went, keeps matched Mac displays mirroring theirs, and captures
+    /// those afresh: a capture running across the change can keep showing a
+    /// matched virtual display as an empty extended desktop.
+    fn resettle_matches(&mut self) {
+        let matches: Vec<Mirrored> = self.streams.values().filter_map(|s| s.mirrored).collect();
+        let shows_cursor = !self.client_cursor;
+        for m in matches {
+            if let Err(e) = m.settle() {
+                tracing::warn!("{e:#}");
+                continue;
+            }
+            for (stream_id, s) in self.streams.iter_mut().filter(|(_, s)| s.display_id == m.master) {
+                if let Err(e) = s.recapture(m.master, shows_cursor) {
+                    tracing::warn!(stream = stream_id, "could not capture the matched display again: {e:#}");
+                }
+            }
+        }
+    }
+}
+
+impl MacStream {
+    /// Starts capturing `target` afresh.
+    fn recapture(&mut self, target: u32, shows_cursor: bool) -> anyhow::Result<()> {
+        self.capture.take();
+        let cb = self.shared.clone();
+        let c = Capture::start(target, self.req.width, self.req.height, shows_cursor, Box::new(move |buf, t| cb.on_capture(buf, t)))?;
+        self.capture = Some(c);
+        self.display_id = target;
+        Ok(())
     }
 }
 
@@ -318,15 +344,18 @@ fn same_display(a: &StreamRequest, b: &StreamRequest) -> bool {
 impl Backend for MacBackend {
     fn mac_displays(&mut self) -> Vec<MacDisplay> {
         // macOS brings back the arrangement it remembers for a set of
-        // displays whenever one comes or goes (another monitor's virtual
-        // display, for one), which can turn a match around or undo it.
-        for s in self.streams.values() {
-            if let Some(m) = s.mirrored
-                && !m.holds()
-            {
-                tracing::warn!(display = m.display, master = m.master, "macOS changed the display mirroring; restoring it");
-                if let Err(e) = m.apply() {
-                    tracing::warn!("{e:#}");
+        // displays whenever one comes or goes, which can turn a match around
+        // or undo it (a display plugged into the Mac, System Settings).
+        if self.streams.values().any(|s| s.mirrored.is_some_and(|m| !m.holds())) {
+            tracing::warn!("macOS changed the display mirroring; restoring it");
+            self.resettle_matches();
+        }
+        let shows_cursor = !self.client_cursor;
+        for (stream_id, s) in self.streams.iter_mut() {
+            if s.capture.as_ref().is_some_and(|c| c.stopped()) {
+                let target = s.display_id;
+                if let Err(e) = s.recapture(target, shows_cursor) {
+                    tracing::warn!(stream = stream_id, "could not restart the capture: {e:#}");
                 }
             }
         }
@@ -355,10 +384,14 @@ impl Backend for MacBackend {
         self.stop_stream(req.stream_id);
         let s = self.create(req, sink)?;
         let matched = s.mirrored.is_some();
+        let extended = s.vdisplay.is_some() && !matched;
         self.streams.insert(req.stream_id, s);
         self.update_cursor();
         if matched && let Some(uuid) = mirrored_uuid(req) {
             self.recapture_mirrors_of(&uuid);
+        }
+        if extended {
+            self.resettle_matches();
         }
         Ok(())
     }
@@ -371,12 +404,16 @@ impl Backend for MacBackend {
                     tracing::warn!("{e:#}");
                 }
             });
+            let extended = s.vdisplay.is_some() && unmatched.is_none();
             if let Some(vd) = s.vdisplay.take() {
                 self.retired.insert(identity(&s.req), vd.id);
             }
             self.update_cursor();
             if unmatched.is_some() && let Some(uuid) = mirrored_uuid(&s.req) {
                 self.recapture_mirrors_of(&uuid);
+            }
+            if extended {
+                self.resettle_matches();
             }
         }
     }
