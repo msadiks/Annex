@@ -3,7 +3,10 @@
 For maintainers. A release is one draft GitHub release holding
 `Annex-windows-x64-setup.exe`, `Annex-windows-x64-portable.zip` and
 `Annex-mac-arm64.dmg`, all built by the
-[Release workflow](../.github/workflows/release.yml). The Windows job
+[Release workflow](../.github/workflows/release.yml), plus `SHA256SUMS.txt`
+with their checksums. The workflow also signs a build provenance for each
+file, so anyone can check with `gh attestation verify <file> --repo
+msadiks/annex-app` that a download came from this repository's workflow. The Windows job
 cross-builds `annex.exe` and packages it with
 [`tools/windows/package.sh`](../tools/windows/package.sh) (NSIS installer and
 portable zip). The Mac job signs the
@@ -22,7 +25,8 @@ and staples the ticket to it, so it opens without Gatekeeper warnings.
    the Apple secrets. Open the workflow run, choose *Review deployments*, tick
    `release` and *Approve and deploy*.
 4. When both jobs are green, open the draft release, write the notes, check
-   that all three files are attached and publish it. If you ran the workflow
+   that all four files are attached (the three downloads and
+   `SHA256SUMS.txt`) and publish it. If you ran the workflow
    by hand, publishing creates the tag and so starts the workflow again; that
    run sees the release is already published and builds nothing. (Running it
    by hand with the tag of a published release fails for the same reason, so
@@ -124,6 +128,57 @@ Revoking the Developer ID certificate also affects copies of Annex that are
 already installed, so read Apple's guidance or ask Apple Developer Support
 before doing that.
 
+### 5. Lock down the repository
+
+These live in the repository settings, not in its files, so check them once:
+
+- *Settings › Actions › General*: set *Workflow permissions* to read-only
+  (the workflows ask for more where they need it), and turn on the policy that
+  requires actions to be pinned to a full-length commit SHA if your plan
+  offers it.
+- *Settings › Rules › Rulesets*: a **tag** ruleset for `v*` that restricts
+  creating, updating and deleting those tags to you (add yourself to the
+  bypass list). A tag push starts a release, so nobody else should be able to
+  make one. A **branch** ruleset for `main` that blocks force pushes and
+  deletion and requires a pull request with CI passing.
+- *Settings › Code security*: Dependabot alerts and security updates, secret
+  scanning with push protection, and private vulnerability reporting
+  ([SECURITY.md](../SECURITY.md) sends reporters there).
+- *Settings › General › Releases*: turn on immutable releases if it is
+  offered, so a published release's files and tag can't be changed.
+- Two-factor authentication on every account that can push or approve the
+  `release` environment.
+
+## What the build trusts, and how it stays pinned
+
+The Mac job builds and signs in one place, so everything it runs is fixed to
+an exact version that can't change underneath it:
+
+- **GitHub Actions** are pinned to full commit hashes in
+  [ci.yml](../.github/workflows/ci.yml),
+  [release.yml](../.github/workflows/release.yml) and
+  [audit.yml](../.github/workflows/audit.yml), with the release name in a
+  comment. Rust comes from the runner's own `rustup`.
+- **Crates** are built with `--locked`, exactly as in `Cargo.lock`.
+- **The Tauri CLI** version is `TAURI_CLI_VERSION` in
+  [tools/mac/release.sh](../tools/mac/release.sh) and in `ci.yml`; change
+  both together.
+- **FFmpeg** is a tag plus the commit it must point to in
+  [tools/ffmpeg/build-mingw.sh](../tools/ffmpeg/build-mingw.sh); the build
+  refuses any other source. Releases always build it from source, never from
+  CI's cache.
+
+[Dependabot](../.github/dependabot.yml) opens a weekly pull request for newer
+actions and crates, skipping versions less than 7 days old. Read what changed
+before merging one: a pin only protects you if updates get a look. The
+[Audit workflow](../.github/workflows/audit.yml) checks `Cargo.lock` against
+the RustSec advisory database on every dependency change and every Monday.
+
+The Windows files are not code-signed (Windows shows a SmartScreen warning).
+Signing them needs a code signing certificate; free options for open source
+projects exist, such as the SignPath Foundation. Until then, the checksums and
+build provenance are how people can check a download.
+
 ## Signing by hand on a Mac
 
 The workflow runs [`tools/mac/release.sh`](../tools/mac/release.sh), which
@@ -141,7 +196,14 @@ Then, from a clean checkout of the tag:
 ```sh
 tools/mac/release.sh        # writes dist/Annex-mac-arm64.dmg, notarized and stapled
 gh release upload v1.1.0 dist/Annex-mac-arm64.dmg
+# Add its checksum next to the Windows files' ones.
+gh release download v1.1.0 --pattern SHA256SUMS.txt --dir dist --clobber
+(cd dist && shasum -a 256 Annex-mac-arm64.dmg >> SHA256SUMS.txt)
+gh release upload v1.1.0 dist/SHA256SUMS.txt --clobber
 ```
+
+A .dmg built by hand has no build provenance, only its checksum and Apple's
+notarization.
 
 macOS ties the Screen Recording permission to the app's code signature, so
 builds signed with the same Developer ID keep the permission across updates.

@@ -18,9 +18,20 @@ on:
 permissions:
   contents: read
 
+# One run per tag at a time, so two runs can't race to fill the same draft.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
+# Every action is pinned to a full commit hash (the comment names its
+# release), so a moved tag can't change what runs next to the signing
+# certificate. Dependabot proposes updates (.github/dependabot.yml). Rust comes
+# from the runner's own rustup, the Tauri CLI version is fixed in
+# tools/mac/release.sh and FFmpeg's commit in tools/ffmpeg/build-mingw.sh.
 jobs:
   # Publishing a draft made by a run by hand creates its tag, and that tag push
   # starts this workflow again. Building then would swap the files of a release
@@ -61,25 +72,23 @@ jobs:
     if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          targets: x86_64-pc-windows-gnu
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --target x86_64-pc-windows-gnu
+          rustup default stable
       - name: Install mingw-w64 and NSIS
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm nsis zip
-      - name: Cache FFmpeg
-        id: ffmpeg
-        uses: actions/cache@v4
-        with:
-          path: third_party/ffmpeg-build
-          key: ffmpeg-mingw-${{ hashFiles('tools/ffmpeg/build-mingw.sh') }}
+      # Always from source, never from a cache: a cache entry can be written by
+      # any CI run on main, and this FFmpeg ships inside annex.exe.
       - name: Build FFmpeg (trimmed, LGPL)
-        if: steps.ffmpeg.outputs.cache-hit != 'true'
         run: tools/ffmpeg/build-mingw.sh
-      - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win
+      - run: cargo build --locked --release --target x86_64-pc-windows-gnu -p annex-win
       - name: Package the installer and portable zip
         run: tools/windows/package.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows
           path: |
@@ -94,10 +103,13 @@ jobs:
     environment: release
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          targets: aarch64-apple-darwin
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --target aarch64-apple-darwin
+          rustup default stable
       - name: Install signing credentials
         env:
           CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -124,7 +136,9 @@ jobs:
               || echo "::warning::Could not add the $ca intermediate"
           done
           printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/annex.p12"
-          security import "$RUNNER_TEMP/annex.p12" -k "$KEYCHAIN" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -t cert -A
+          # -x: the private key can't be exported again, only used in place.
+          # -T: only codesign may use it, not every program on the runner.
+          security import "$RUNNER_TEMP/annex.p12" -k "$KEYCHAIN" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -t cert -x -T /usr/bin/codesign
           rm "$RUNNER_TEMP/annex.p12"
           # Let codesign use the key without a GUI prompt.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
@@ -143,7 +157,7 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/notary.p8" ]; then export NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8"; fi
           tools/mac/release.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mac
           path: dist/Annex-mac-arm64.dmg
@@ -161,12 +175,21 @@ jobs:
     if: ${{ !cancelled() && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write     # create the draft release and upload its files
+      id-token: write     # sign the build provenance (Sigstore)
+      attestations: write # store the provenance with the repository
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      # Lets anyone check a download is the file this workflow built:
+      # SHA256SUMS.txt by hand, the provenance with `gh attestation verify`.
+      - name: Checksums
+        run: sha256sum Annex-* | tee SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: Annex-*
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
@@ -175,3 +198,4 @@ jobs:
             Annex-windows-x64-setup.exe
             Annex-windows-x64-portable.zip
             Annex-mac-arm64.dmg
+            SHA256SUMS.txt

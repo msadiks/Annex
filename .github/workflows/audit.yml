@@ -1,0 +1,36 @@
+name: Audit
+
+# Checks Cargo.lock against the RustSec advisory database: on every change to
+# the dependencies, and weekly, because new advisories appear for crates that
+# haven't changed.
+on:
+  push:
+    branches: [main]
+    paths: ["**/Cargo.toml", Cargo.lock, .github/workflows/audit.yml]
+  pull_request:
+    paths: ["**/Cargo.toml", Cargo.lock, .github/workflows/audit.yml]
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: Known vulnerabilities in dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      # Fails on a vulnerability; unmaintained or unsound crates are only listed.
+      - run: cargo audit

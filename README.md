@@ -94,6 +94,10 @@ firewall prompts and the portable Windows version.
    download `Annex-mac-arm64.dmg` for the Mac and, for the PC, either
    `Annex-windows-x64-setup.exe` (installer) or
    `Annex-windows-x64-portable.zip` (no install).
+   - To check a download is exactly the file the release workflow built
+     (releases after 1.1.0), compare it with the release's `SHA256SUMS.txt`,
+     or run `gh attestation verify <file> --repo msadiks/annex-app` with the
+     [GitHub CLI](https://cli.github.com).
 2. **PC:** run the installer, or unzip the portable folder anywhere (a USB
    stick works) and run `Annex.exe` in it. The Annex window opens, and Annex
    also lives in the system tray (the monitor icon).
