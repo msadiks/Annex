@@ -37,12 +37,16 @@ else
   NOTARY_AUTH=(--keychain-profile "$PROFILE")
 fi
 
-if cargo tauri --version >/dev/null 2>&1; then
+# The CLI runs while the signing certificate is available, so it is one exact
+# version, never "the newest 2.x". Keep in step with TAURI_CLI_VERSION in
+# .github/workflows/ci.yml.
+TAURI_CLI_VERSION="2.12.4"
+if [ "$(cargo tauri --version 2>/dev/null)" = "tauri-cli $TAURI_CLI_VERSION" ]; then
   TAURI=(cargo tauri)
 elif command -v npx >/dev/null 2>&1; then
-  TAURI=(npx --yes @tauri-apps/cli@2)
+  TAURI=(npx --yes "@tauri-apps/cli@$TAURI_CLI_VERSION")
 else
-  cargo install tauri-cli --version "^2" --locked
+  cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked
   TAURI=(cargo tauri)
 fi
 
@@ -53,7 +57,8 @@ export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build"
 # Tauri skips the Finder step that lays out the .dmg window (background, icon
 # positions) when CI=true; a release needs it.
 export TAURI_BUNDLER_DMG_IGNORE_CI=true
-(cd "$ROOT/apps/annex-mac-app" && APPLE_SIGNING_IDENTITY="$IDENTITY" "${TAURI[@]}" build --target aarch64-apple-darwin --bundles dmg)
+# --locked (passed on to cargo): build exactly the dependency versions in Cargo.lock.
+(cd "$ROOT/apps/annex-mac-app" && APPLE_SIGNING_IDENTITY="$IDENTITY" "${TAURI[@]}" build --target aarch64-apple-darwin --bundles dmg -- --locked)
 
 DMG="$(ls -t "$ROOT"/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg | head -1)"
 OUT="$ROOT/dist/Annex-mac-arm64.dmg"

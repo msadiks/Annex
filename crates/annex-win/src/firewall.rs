@@ -203,24 +203,50 @@ fn netsh(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// `annex.exe --allow-firewall[=private]`, run elevated (by the installer or
-/// via [`fix`]): replaces every rule for this executable with an inbound
-/// allow rule for private and domain networks and, unless `public` is false,
-/// one for public networks limited to the local subnet. Windows 11 marks new
-/// networks Public, and Annex only talks to paired Macs on the LAN anyway.
-pub fn allow(exe: &Path, public: bool) -> bool {
+/// mDNS, which the Mac uses to find this PC.
+const MDNS_PORT: u16 = 5353;
+
+/// The ports [`allow`] opens: `--ports=<tcp>,<udp>` when given (the window's
+/// "Allow" button passes them), else the ones in the settings, else the
+/// defaults.
+pub fn ports(args: &[String]) -> (u16, u16) {
+    let given = args.iter().find_map(|a| a.strip_prefix("--ports=")).and_then(|p| {
+        let (tcp, udp) = p.split_once(',')?;
+        Some((tcp.trim().parse().ok()?, udp.trim().parse().ok()?))
+    });
+    given
+        .or_else(|| {
+            let path = crate::misc::data_dir().join("config.toml");
+            let cfg = annex_core::config::load::<annex_core::config::ReceiverConfig>(&path).ok()??;
+            Some((cfg.control_port, cfg.video_port))
+        })
+        .unwrap_or((annex_proto::DEFAULT_CONTROL_PORT, annex_proto::DEFAULT_VIDEO_PORT))
+}
+
+/// `annex.exe --allow-firewall[=private] [--ports=<tcp>,<udp>]`, run elevated
+/// (by the installer or via [`fix`]): replaces every rule for this executable
+/// with inbound allow rules for Annex's own ports only (TCP control, UDP video
+/// and mDNS) on private and domain networks and, unless `public` is false, on
+/// public networks limited to the local subnet. Windows 11 marks new networks
+/// Public, and Annex only talks to paired Macs on the LAN anyway.
+pub fn allow(exe: &Path, public: bool, tcp: u16, udp: u16) -> bool {
     remove(exe);
     let program = format!("program={}", exe.display());
-    let mut ok = netsh(&[
-        "advfirewall", "firewall", "add", "rule", "name=Annex", "dir=in", "action=allow", &program, "enable=yes",
-        "profile=private,domain", "description=Lets your Mac connect to Annex on this PC.",
-    ]);
-    if public {
+    let tcp_ports = format!("localport={tcp}");
+    let udp_ports = if udp == MDNS_PORT { format!("localport={udp}") } else { format!("localport={udp},{MDNS_PORT}") };
+    let mut ok = true;
+    for (protocol, ports) in [("protocol=TCP", tcp_ports.as_str()), ("protocol=UDP", udp_ports.as_str())] {
         ok &= netsh(&[
-            "advfirewall", "firewall", "add", "rule", "name=Annex (public networks)", "dir=in", "action=allow", &program,
-            "enable=yes", "profile=public", "remoteip=localsubnet",
-            "description=Lets your Mac connect to Annex on public networks, from this PC's own subnet only.",
+            "advfirewall", "firewall", "add", "rule", "name=Annex", "dir=in", "action=allow", &program, protocol, ports,
+            "enable=yes", "profile=private,domain", "description=Lets your Mac connect to Annex on this PC.",
         ]);
+        if public {
+            ok &= netsh(&[
+                "advfirewall", "firewall", "add", "rule", "name=Annex (public networks)", "dir=in", "action=allow", &program,
+                protocol, ports, "enable=yes", "profile=public", "remoteip=localsubnet",
+                "description=Lets your Mac connect to Annex on public networks, from this PC's own subnet only.",
+            ]);
+        }
     }
     ok
 }
@@ -231,17 +257,17 @@ pub fn remove(exe: &Path) -> bool {
     netsh(&["advfirewall", "firewall", "delete", "rule", "name=all", &program])
 }
 
-/// Re-runs Annex elevated (one UAC prompt) to fix the rules and waits for it.
-/// Returns false if the user declined.
-pub fn fix() -> bool {
+/// Re-runs Annex elevated (one UAC prompt) to open `tcp` and `udp` and waits
+/// for it. Returns false if the user declined.
+pub fn fix(tcp: u16, udp: u16) -> bool {
     let exe: Vec<u16> = exe_path().encode_utf16().chain(std::iter::once(0)).collect();
-    let args = w!("--allow-firewall");
+    let args: Vec<u16> = format!("--allow-firewall --ports={tcp},{udp}").encode_utf16().chain(std::iter::once(0)).collect();
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS,
         lpVerb: w!("runas"),
         lpFile: PCWSTR(exe.as_ptr()),
-        lpParameters: args,
+        lpParameters: PCWSTR(args.as_ptr()),
         nShow: SW_HIDE.0,
         ..Default::default()
     };

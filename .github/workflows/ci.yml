@@ -6,47 +6,64 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only token: CI only builds and tests.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Keep in step with TAURI_CLI_VERSION in tools/mac/release.sh.
+  TAURI_CLI_VERSION: 2.12.4
 
+# Every action is pinned to a full commit hash (the comment names its
+# release), so a moved tag can't change what runs. Pins are updated by hand
+# (docs/releasing.md). Rust comes from the runner's own rustup.
 jobs:
   test:
     name: Protocol and core tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p annex-proto -p annex-core -p annex-sender
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked -p annex-proto -p annex-core -p annex-sender
 
   windows:
     name: Windows receiver (cross-built)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          targets: x86_64-pc-windows-gnu
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --target x86_64-pc-windows-gnu
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install mingw-w64 and NSIS
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm nsis zip
+      # CI only: releases always build FFmpeg from source and never read this cache.
       - name: Cache FFmpeg
         id: ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: third_party/ffmpeg-build
           key: ffmpeg-mingw-${{ hashFiles('tools/ffmpeg/build-mingw.sh') }}
       - name: Build FFmpeg (trimmed, LGPL)
         if: steps.ffmpeg.outputs.cache-hit != 'true'
         run: tools/ffmpeg/build-mingw.sh
-      - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win -p annex-testsrc
+      - run: cargo build --locked --release --target x86_64-pc-windows-gnu -p annex-win -p annex-testsrc
       - name: Package the installer and portable zip
         run: tools/windows/package.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: annex-windows
           path: |
@@ -59,21 +76,24 @@ jobs:
     name: Mac sender and app
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p annex-mac
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --locked --release -p annex-mac
       - name: Build the app into an unsigned .dmg
         working-directory: apps/annex-mac-app
         env:
           # Lay out the .dmg window as a release does; Tauri skips that on CI.
           TAURI_BUNDLER_DMG_IGNORE_CI: "true"
-        run: npx --yes @tauri-apps/cli@2 build --bundles dmg
-      - uses: actions/upload-artifact@v4
+        run: npx --yes "@tauri-apps/cli@$TAURI_CLI_VERSION" build --bundles dmg -- --locked
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: annex-mac-cli
           path: target/release/annex-mac-cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: annex-mac-unsigned-dmg
           path: target/release/bundle/dmg/*.dmg

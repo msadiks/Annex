@@ -11,6 +11,10 @@
 set -euo pipefail
 
 FFMPEG_TAG="${FFMPEG_TAG:-n8.1.3}"
+# The commit FFMPEG_TAG points to. A tag can be moved to other code; a commit
+# hash can't, so the build refuses any other source. Change both together:
+#   git ls-remote https://github.com/FFmpeg/FFmpeg.git "refs/tags/<tag>^{}"
+FFMPEG_COMMIT="${FFMPEG_COMMIT:-1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PREFIX="${1:-$ROOT/third_party/ffmpeg-build}"
 SRC="${FFMPEG_SRC:-$ROOT/third_party/ffmpeg-src}"
@@ -18,6 +22,11 @@ CROSS="${CROSS_PREFIX:-x86_64-w64-mingw32-}"
 
 if [ ! -d "$SRC/.git" ]; then
   git clone --depth 1 --branch "$FFMPEG_TAG" https://github.com/FFmpeg/FFmpeg.git "$SRC"
+fi
+HEAD_COMMIT="$(git -C "$SRC" rev-parse HEAD)"
+if [ "$HEAD_COMMIT" != "$FFMPEG_COMMIT" ]; then
+  echo "refusing: FFmpeg source in $SRC is at $HEAD_COMMIT, expected $FFMPEG_TAG = $FFMPEG_COMMIT" >&2
+  exit 1
 fi
 
 cd "$SRC"
