@@ -4,7 +4,8 @@ to the Applications folder and short instructions. Writes a two-resolution
 TIFF (1x and Retina) to apps/annex-mac-app/dmg/background.tiff.
 
 Needs Pillow and the Inter font (or point --font-dir at it). The
-icon positions must match bundle.macOS.dmg in tauri.conf.json.
+icon positions must match bundle.macOS.dmg in tauri.conf.json, whose window
+height is this image's plus Finder's 32 pt title bar.
 """
 import argparse
 import os
