@@ -133,7 +133,9 @@ Mac to make it permanent.
   (*Extend* as a new Mac display, or *Mirror* one of the Mac's displays), see
   live stats per monitor, pair or forget the Mac, and set *Start with
   Windows* and the stats overlay (also `Ctrl+Shift+F12`). Closing the window
-  keeps Annex running in the tray; *Quit Annex* stops it.
+  keeps Annex running in the tray; *Quit Annex* stops it. While every PC
+  monitor shows a Mac display, the window waits in the tray and comes back
+  when a monitor is free.
 - **PC tray menu:** right-click the tray icon for the same monitor settings
   in a menu.
 - **Mac menu bar menu:** each PC monitor has a submenu with the same

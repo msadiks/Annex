@@ -122,6 +122,8 @@ struct App {
     warning: Option<String>,
     gui: Option<Gui>,
     gui_pushed: String,
+    /// The window went to the tray because every monitor showed a Mac display.
+    gui_hidden: bool,
     firewall: Firewall,
     firewall_busy: bool,
     firewall_checked: Instant,
@@ -259,6 +261,7 @@ pub fn run() -> Result<()> {
         warning: None,
         gui: None,
         gui_pushed: String::new(),
+        gui_hidden: false,
         firewall: Firewall::Checking,
         firewall_busy: false,
         firewall_checked: Instant::now(),
@@ -874,6 +877,7 @@ impl App {
     /// Opens (or brings forward) the Annex window. `explain` reports a
     /// missing WebView2 runtime. Returns false if the window can't open.
     fn show_gui(&mut self, explain: bool) -> bool {
+        self.gui_hidden = false;
         let covered = self.covered();
         if self.gui.is_none() {
             match Gui::open(&self.shared, &covered) {
@@ -909,9 +913,18 @@ impl App {
     }
 
     /// Keeps the window out from under a display that just opened or closed.
-    fn arrange_gui(&self) {
-        if let Some(g) = self.gui.as_ref().filter(|g| g.visible()) {
-            g.arrange(&self.covered());
+    /// With every monitor showing a Mac display there's nowhere left for it,
+    /// so it waits in the tray and comes back when a monitor frees up.
+    fn arrange_gui(&mut self) {
+        let covered = self.covered();
+        let Some(g) = &self.gui else { return };
+        if g.visible() {
+            if !g.arrange(&covered) {
+                g.hide();
+                self.gui_hidden = true;
+            }
+        } else if self.gui_hidden && g.reappear(&covered) {
+            self.gui_hidden = false;
         }
     }
 
@@ -922,6 +935,7 @@ impl App {
             self.stop_pairing_mode();
         }
         self.gui = None;
+        self.gui_hidden = false;
         self.refresh();
     }
 
