@@ -1,8 +1,7 @@
 # Releasing
 
 For maintainers. A release is one draft GitHub release holding `Annex.exe`
-(built by CI) and `Annex-mac-arm64.dmg` (built, signed and notarized on a
-Mac, so Apple credentials never go to GitHub).
+and `Annex-mac-arm64.dmg`.
 
 ## Once, on the Mac that signs releases
 
