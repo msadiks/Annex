@@ -38,6 +38,11 @@ pub fn mirror_display_identity(receiver_id: &str, monitor_index: u32) -> (u32, u
     (VENDOR_ID, product, serial.max(1))
 }
 
+/// Whether a virtual display's product id is a [`mirror_display_identity`].
+pub fn is_mirror_product(product: u32) -> bool {
+    product & 0xF000 == 0xB000
+}
+
 /// Stable per-monitor id on Windows: friendly name plus EDID identity when
 /// available, else the device path.
 pub fn monitor_id(friendly_name: &str, edid: Option<(u16, u16, u32)>, device_path: &str) -> u64 {
@@ -65,5 +70,11 @@ mod tests {
         // Pinned value: changing the hash would rearrange users' displays.
         assert_eq!(fnv1a64(&[b"annex"]), fnv1a64(&[b"annex"]));
         assert_ne!(fnv1a64(&[b"ab", b"c"]), fnv1a64(&[b"a", b"bc"]));
+    }
+
+    #[test]
+    fn mirror_displays_are_told_apart_from_extended_ones() {
+        assert!(is_mirror_product(mirror_display_identity("r1", 3).1));
+        assert!(!is_mirror_product(virtual_display_identity("r1", 3).1));
     }
 }

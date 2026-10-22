@@ -17,6 +17,7 @@ use objc2_core_video::{CVPixelBuffer, CVPixelBufferPool};
 
 use crate::capture::Capture;
 use crate::cursor::{CursorTracker, Target};
+use crate::displays::Mirrored;
 use crate::encode::Encoder;
 use crate::pack::Packer;
 use crate::sys::SendBox;
@@ -151,7 +152,7 @@ struct MacStream {
     vdisplay: Option<VirtualDisplay>,
     /// Mac display made to mirror `vdisplay` (mirror matched to the PC
     /// monitor's shape).
-    mirrored: Option<u32>,
+    mirrored: Option<Mirrored>,
 }
 
 /// What macOS remembers a stream's virtual display by.
@@ -231,15 +232,22 @@ impl MacBackend {
             }
             StreamSource::Mirror { display_uuid } => {
                 let id = crate::displays::id_of(display_uuid).context("the Mac display to mirror is not connected")?;
-                if req.match_mirror && crate::displays::annex_master(id).is_none() {
-                    // The Mac display mirrors a virtual display of the PC
-                    // monitor's shape, so the picture fills the monitor.
-                    let vd = self.new_vdisplay(req, format!("Annex mirror: {}", req.monitor_name))?;
-                    crate::displays::set_mirror(id, Some(vd.id))?;
-                    mirrored = Some(id);
-                    (vd.id, Some(vd))
-                } else {
-                    (crate::displays::content_of(id), None)
+                // Another stream may already match this Mac display to its
+                // monitor; then this one shows that stream's picture. What
+                // macOS reports the display mirrors is not trusted for this:
+                // it can be left over from an earlier stream.
+                let matched_by =
+                    self.streams.values().find(|s| s.mirrored.is_some_and(|m| m.display == id)).map(|s| s.display_id);
+                match matched_by {
+                    None if req.match_mirror => {
+                        // The Mac display mirrors a virtual display of the PC
+                        // monitor's shape, so the picture fills the monitor.
+                        let vd = self.new_vdisplay(req, format!("Annex mirror: {}", req.monitor_name))?;
+                        mirrored = Some(Mirrored::start(id, vd.id)?);
+                        (vd.id, Some(vd))
+                    }
+                    Some(shown) => (shown, None),
+                    None => (crate::displays::content_of(id), None),
                 }
             }
         };
@@ -309,6 +317,19 @@ fn same_display(a: &StreamRequest, b: &StreamRequest) -> bool {
 
 impl Backend for MacBackend {
     fn mac_displays(&mut self) -> Vec<MacDisplay> {
+        // macOS brings back the arrangement it remembers for a set of
+        // displays whenever one comes or goes (another monitor's virtual
+        // display, for one), which can turn a match around or undo it.
+        for s in self.streams.values() {
+            if let Some(m) = s.mirrored
+                && !m.holds()
+            {
+                tracing::warn!(display = m.display, master = m.master, "macOS changed the display mirroring; restoring it");
+                if let Err(e) = m.apply() {
+                    tracing::warn!("{e:#}");
+                }
+            }
+        }
         crate::displays::list()
     }
 
@@ -345,8 +366,8 @@ impl Backend for MacBackend {
     fn stop_stream(&mut self, stream_id: u8) {
         if let Some(mut s) = self.streams.remove(&stream_id) {
             s.capture.take();
-            let unmatched = s.mirrored.take().inspect(|id| {
-                if let Err(e) = crate::displays::set_mirror(*id, None) {
+            let unmatched = s.mirrored.take().inspect(|m| {
+                if let Err(e) = m.stop() {
                     tracing::warn!("{e:#}");
                 }
             });
