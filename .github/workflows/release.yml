@@ -22,7 +22,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Publishing a draft made by a run by hand creates its tag, and that tag push
+  # starts this workflow again. Building then would swap the files of a release
+  # people are already downloading, so a published release is never rebuilt.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.release.outputs.build }}
+    steps:
+      - name: Check the tag's release isn't published yet
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # This finds published releases only, never drafts.
+          status="$(curl -sS --retry 3 -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+          case "$status" in
+            404)
+              echo "build=true" >> "$GITHUB_OUTPUT" ;;
+            200)
+              if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+                echo "::error::$TAG is already published; run this again with a new tag"
+                exit 1
+              fi
+              echo "::notice::$TAG is already published, so this run builds nothing"
+              echo "build=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Could not look up the $TAG release (HTTP $status)"
+              exit 1 ;;
+          esac
+
   windows:
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +88,8 @@ jobs:
           if-no-files-found: error
 
   mac:
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: macos-latest
     environment: release
     timeout-minutes: 60
