@@ -962,7 +962,7 @@ impl App {
         let shared = self.shared.clone();
         let (tcp, udp) = (self.cfg.control_port, self.cfg.video_port);
         let _ = std::thread::Builder::new().name("annex-firewall".into()).spawn(move || {
-            firewall::fix();
+            firewall::fix(tcp, udp);
             shared.ui(UiCmd::Firewall(firewall::check(tcp, udp)));
         });
     }

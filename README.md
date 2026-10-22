@@ -106,7 +106,8 @@ firewall prompts and the portable Windows version.
    - Setup installs Annex for your Windows account. When you click
      *Install*, Windows asks for permission once, so setup can add a Windows
      Firewall rule for Annex: private networks, plus public networks for
-     devices on your local subnet only. Annex uses TCP 48800 and UDP 48801.
+     devices on your local subnet only. The rule opens only Annex's own
+     ports: TCP 48800, UDP 48801 and mDNS (UDP 5353).
    - The portable copy has no installer, so allow it when Windows Firewall
      asks. If the firewall still blocks the Mac (for example on a network
      Windows marks *Public*), the Annex window shows a banner with a button

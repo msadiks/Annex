@@ -39,8 +39,10 @@ fn main() {
     // "Allow" button.
     let exe = std::env::current_exe().unwrap_or_default();
     match args.first().map(String::as_str) {
-        Some("--allow-firewall") => std::process::exit(if firewall::allow(&exe, true) { 0 } else { 1 }),
-        Some("--allow-firewall=private") => std::process::exit(if firewall::allow(&exe, false) { 0 } else { 1 }),
+        Some(a @ ("--allow-firewall" | "--allow-firewall=private")) => {
+            let (tcp, udp) = firewall::ports(&args);
+            std::process::exit(if firewall::allow(&exe, a == "--allow-firewall", tcp, udp) { 0 } else { 1 })
+        }
         Some("--remove-firewall") => {
             firewall::remove(&exe);
             return;
