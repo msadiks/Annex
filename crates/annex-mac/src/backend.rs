@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use annex_core::identity::virtual_display_identity;
+use annex_core::identity::{mirror_display_identity, virtual_display_identity};
 use annex_proto::control::{MacDisplay, StreamSource, VideoMode};
 use annex_sender::{Backend, CursorSink, FrameSink, StreamRequest};
 use anyhow::Context;
@@ -144,10 +144,23 @@ impl Shared {
 
 struct MacStream {
     req: StreamRequest,
+    /// The display being captured.
     display_id: u32,
     shared: Arc<Shared>,
     capture: Option<Capture>,
     vdisplay: Option<VirtualDisplay>,
+    /// Mac display made to mirror `vdisplay` (mirror matched to the PC
+    /// monitor's shape).
+    mirrored: Option<u32>,
+}
+
+/// What macOS remembers a stream's virtual display by.
+fn identity(req: &StreamRequest) -> (u32, u32, u32) {
+    if req.match_mirror {
+        mirror_display_identity(&req.receiver_id, req.slot)
+    } else {
+        virtual_display_identity(&req.receiver_id, req.slot)
+    }
 }
 
 pub struct MacBackend {
@@ -201,19 +214,33 @@ impl MacBackend {
         }
     }
 
+    fn new_vdisplay(&mut self, req: &StreamRequest, name: String) -> anyhow::Result<VirtualDisplay> {
+        let identity = identity(req);
+        if let Some(old) = self.retired.remove(&identity) {
+            vdisplay::wait_gone(old, Duration::from_secs(2));
+        }
+        VirtualDisplay::create(&name, req.width, req.height, identity)
+    }
+
     fn create(&mut self, req: &StreamRequest, sink: FrameSink) -> anyhow::Result<MacStream> {
+        let mut mirrored = None;
         let (display_id, vdisplay) = match &req.source {
             StreamSource::Extend => {
-                let identity = virtual_display_identity(&req.receiver_id, req.slot);
-                if let Some(old) = self.retired.remove(&identity) {
-                    vdisplay::wait_gone(old, Duration::from_secs(2));
-                }
-                let vd = VirtualDisplay::create(&format!("Annex: {}", req.monitor_name), req.width, req.height, identity)?;
+                let vd = self.new_vdisplay(req, format!("Annex: {}", req.monitor_name))?;
                 (vd.id, Some(vd))
             }
             StreamSource::Mirror { display_uuid } => {
                 let id = crate::displays::id_of(display_uuid).context("the Mac display to mirror is not connected")?;
-                (id, None)
+                if req.match_mirror && crate::displays::annex_master(id).is_none() {
+                    // The Mac display mirrors a virtual display of the PC
+                    // monitor's shape, so the picture fills the monitor.
+                    let vd = self.new_vdisplay(req, format!("Annex mirror: {}", req.monitor_name))?;
+                    crate::displays::set_mirror(id, Some(vd.id))?;
+                    mirrored = Some(id);
+                    (vd.id, Some(vd))
+                } else {
+                    (crate::displays::content_of(id), None)
+                }
             }
         };
         let pipe = self.new_pipe(req, sink)?;
@@ -235,12 +262,49 @@ impl MacBackend {
             !self.client_cursor,
             Box::new(move |buf, t| cb.on_capture(buf, t)),
         )?;
-        Ok(MacStream { req: req.clone(), display_id, shared, capture: Some(capture), vdisplay })
+        Ok(MacStream { req: req.clone(), display_id, shared, capture: Some(capture), vdisplay, mirrored })
+    }
+
+    /// Points plain mirrors of a Mac display at whatever shows its picture
+    /// now, after a stream started or stopped matching it to a PC monitor.
+    fn recapture_mirrors_of(&mut self, display_uuid: &str) {
+        let Some(id) = crate::displays::id_of(display_uuid) else { return };
+        let target = crate::displays::content_of(id);
+        let shows_cursor = !self.client_cursor;
+        for (stream_id, s) in self.streams.iter_mut() {
+            let plain_mirror = s.vdisplay.is_none()
+                && matches!(&s.req.source, StreamSource::Mirror { display_uuid: u } if u == display_uuid);
+            if !plain_mirror || s.display_id == target {
+                continue;
+            }
+            s.capture.take();
+            let cb = s.shared.clone();
+            match Capture::start(target, s.req.width, s.req.height, shows_cursor, Box::new(move |buf, t| cb.on_capture(buf, t))) {
+                Ok(c) => {
+                    s.capture = Some(c);
+                    s.display_id = target;
+                }
+                Err(e) => tracing::warn!(stream = stream_id, "could not follow the mirrored display: {e:#}"),
+            }
+        }
+        self.update_cursor();
+    }
+}
+
+fn mirrored_uuid(req: &StreamRequest) -> Option<String> {
+    match &req.source {
+        StreamSource::Mirror { display_uuid } => Some(display_uuid.clone()),
+        StreamSource::Extend => None,
     }
 }
 
 fn same_display(a: &StreamRequest, b: &StreamRequest) -> bool {
-    a.source == b.source && a.width == b.width && a.height == b.height && a.slot == b.slot && a.receiver_id == b.receiver_id
+    a.source == b.source
+        && a.match_mirror == b.match_mirror
+        && a.width == b.width
+        && a.height == b.height
+        && a.slot == b.slot
+        && a.receiver_id == b.receiver_id
 }
 
 impl Backend for MacBackend {
@@ -269,18 +333,30 @@ impl Backend for MacBackend {
         }
         self.stop_stream(req.stream_id);
         let s = self.create(req, sink)?;
+        let matched = s.mirrored.is_some();
         self.streams.insert(req.stream_id, s);
         self.update_cursor();
+        if matched && let Some(uuid) = mirrored_uuid(req) {
+            self.recapture_mirrors_of(&uuid);
+        }
         Ok(())
     }
 
     fn stop_stream(&mut self, stream_id: u8) {
         if let Some(mut s) = self.streams.remove(&stream_id) {
             s.capture.take();
+            let unmatched = s.mirrored.take().inspect(|id| {
+                if let Err(e) = crate::displays::set_mirror(*id, None) {
+                    tracing::warn!("{e:#}");
+                }
+            });
             if let Some(vd) = s.vdisplay.take() {
-                self.retired.insert(virtual_display_identity(&s.req.receiver_id, s.req.slot), vd.id);
+                self.retired.insert(identity(&s.req), vd.id);
             }
             self.update_cursor();
+            if unmatched.is_some() && let Some(uuid) = mirrored_uuid(&s.req) {
+                self.recapture_mirrors_of(&uuid);
+            }
         }
     }
 

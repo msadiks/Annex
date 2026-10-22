@@ -1,7 +1,7 @@
 //! Config files (TOML). Written atomically; on Unix with mode 0600 because
 //! they hold the private key.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -123,6 +123,10 @@ pub struct SenderConfig {
     /// Override of the encoder budget (encoded megapixels per second).
     #[serde(default)]
     pub encoder_budget_mpx: Option<f64>,
+    /// Receiver monitors whose mirror switches the Mac display to the
+    /// monitor's shape instead of fitting it with black bars.
+    #[serde(default)]
+    pub mirror_match: BTreeSet<String>,
 }
 
 impl SenderConfig {
@@ -134,6 +138,7 @@ impl SenderConfig {
             slots: BTreeMap::new(),
             client_cursor: true,
             encoder_budget_mpx: None,
+            mirror_match: BTreeSet::new(),
         }
     }
 

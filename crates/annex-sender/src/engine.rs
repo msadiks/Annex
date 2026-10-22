@@ -118,6 +118,8 @@ pub struct Status {
     pub mac_displays: Vec<MacDisplay>,
     pub streams: Vec<StreamStatus>,
     pub client_cursor: bool,
+    /// Monitors whose mirror matches the PC monitor's shape (Mac-side setting).
+    pub mirror_match: Vec<u64>,
     pub pairing: PairingState,
     /// Last thing worth telling the user.
     pub message: Option<String>,
@@ -136,6 +138,7 @@ impl Default for Status {
             mac_displays: Vec::new(),
             streams: Vec::new(),
             client_cursor: true,
+            mirror_match: Vec::new(),
             pairing: PairingState::Idle,
             message: None,
         }
@@ -147,11 +150,12 @@ enum Cmd {
     Forget,
     SetMonitorPrefs { monitor_id: u64, enabled: Option<bool>, pinned_mode: Option<ModePref>, source: Option<SourcePref> },
     SetClientCursor(bool),
+    SetMirrorMatch { monitor_id: u64, on: bool },
     Shutdown(Sender<()>),
 }
 
 enum Ev {
-    Connected { stream: TcpStream, hs: Box<noise::Handshake>, video: SocketAddr, name: String },
+    Connected { stream: TcpStream, hs: Box<noise::Handshake>, video: SocketAddr, peer_id: String, name: String },
     ConnectFailed(String),
     Ctl { session: u64, msg: ControlMsg },
     Closed { session: u64, error: Option<String> },
@@ -200,6 +204,12 @@ impl EngineHandle {
 
     pub fn set_client_cursor(&self, on: bool) {
         let _ = self.cmd.send(Cmd::SetClientCursor(on));
+    }
+
+    /// Mirror mode for a monitor: `true` switches the Mac display to the
+    /// monitor's shape, `false` fits it with black bars.
+    pub fn set_mirror_match(&self, monitor_id: u64, on: bool) {
+        let _ = self.cmd.send(Cmd::SetMirrorMatch { monitor_id, on });
     }
 
     /// Tells the PC goodbye and unplugs every display. Blocks up to a second.
@@ -408,6 +418,7 @@ impl<B: Backend> Engine<B> {
         st.monitors = self.monitors.clone();
         st.mac_displays = self.mac_displays.clone();
         st.client_cursor = self.cfg.client_cursor;
+        st.mirror_match = self.cfg.mirror_match.iter().filter_map(|id| id.parse().ok()).collect();
         st.streams = self
             .streams
             .iter()
@@ -470,6 +481,8 @@ impl<B: Backend> Engine<B> {
                 self.cfg.paired = None;
                 self.save_config();
                 self.monitors.clear();
+                self.st.pairing = PairingState::Idle;
+                self.st.receiver_gpu = None;
                 self.note("Forgot the paired PC");
             }
             Cmd::SetMonitorPrefs { monitor_id, enabled, pinned_mode, source } => {
@@ -480,6 +493,14 @@ impl<B: Backend> Engine<B> {
                 self.save_config();
                 let sink = on.then(|| CursorSink { tx: self.cursor_tx.clone() });
                 self.backend.set_client_cursor(on, sink);
+            }
+            Cmd::SetMirrorMatch { monitor_id, on } => {
+                let key = monitor_id.to_string();
+                let changed = if on { self.cfg.mirror_match.insert(key) } else { self.cfg.mirror_match.remove(&key) };
+                if changed {
+                    self.save_config();
+                    self.reconcile();
+                }
             }
             Cmd::Shutdown(_) => unreachable!(),
         }
@@ -548,10 +569,13 @@ impl<B: Backend> Engine<B> {
 
     fn on_event(&mut self, e: Ev) {
         match e {
-            Ev::Connected { stream, hs, video, name } => {
+            Ev::Connected { stream, hs, video, peer_id, name } => {
                 self.connecting = false;
                 self.backoff = Duration::from_millis(500);
-                if let Err(e) = self.begin_session(stream, *hs, video) {
+                if self.cfg.paired.as_ref().map(|p| &p.id) != Some(&peer_id) {
+                    // Forgotten (or re-paired) while the connect was under way.
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                } else if let Err(e) = self.begin_session(stream, *hs, video) {
                     self.note(format!("Session setup failed: {e}"));
                 } else {
                     tracing::info!(%video, receiver = %name, "connected");
@@ -563,7 +587,9 @@ impl<B: Backend> Engine<B> {
                 self.next_connect = Instant::now() + self.backoff;
                 self.backoff = (self.backoff * 2).min(Duration::from_secs(5));
                 tracing::debug!("connect failed: {why}");
-                self.st.message = Some(why);
+                if self.cfg.paired.is_some() {
+                    self.st.message = Some(why);
+                }
             }
             Ev::Ctl { session, msg } => {
                 if self.session.as_ref().map(|s| s.id) == Some(session) {
@@ -761,16 +787,27 @@ impl<B: Backend> Engine<B> {
     // ----- streams ------------------------------------------------------
 
     /// Picture size and source for a monitor (spec 3.1, mirror letterboxing).
-    fn picture_for(&self, m: &MonitorInfo) -> (u32, u32, StreamSource, Option<String>) {
+    /// `matched` collects the Mac displays already matched to a monitor's
+    /// shape: a display can take only one shape at a time.
+    fn picture_for(&self, m: &MonitorInfo, matched: &mut HashSet<String>) -> Picture {
         let (w, h) = stream_size(m.native_w, m.native_h);
         if let SourcePref::Mirror { display_uuid } = &m.source {
             if let Some(d) = self.mac_displays.iter().find(|d| &d.uuid == display_uuid) {
+                let source = StreamSource::Mirror { display_uuid: display_uuid.clone() };
+                let mut note = None;
+                if self.cfg.mirror_match.contains(&m.id.to_string()) {
+                    if matched.insert(display_uuid.clone()) {
+                        return Picture { width: w, height: h, source, match_mirror: true, note };
+                    }
+                    note = Some("Another PC monitor already matches this Mac display, so this one fits it".into());
+                }
                 let (mw, mh) = fit_within(d.width, d.height, w, h);
-                return (mw, mh, StreamSource::Mirror { display_uuid: display_uuid.clone() }, None);
+                return Picture { width: mw, height: mh, source, match_mirror: false, note };
             }
-            return (w, h, StreamSource::Extend, Some("The mirrored Mac display is not connected; extending instead".into()));
+            let note = Some("The mirrored Mac display is not connected; extending instead".into());
+            return Picture { width: w, height: h, source: StreamSource::Extend, match_mirror: false, note };
         }
-        (w, h, StreamSource::Extend, None)
+        Picture { width: w, height: h, source: StreamSource::Extend, match_mirror: false, note: None }
     }
 
     /// Makes the running streams match the PC's monitor list.
@@ -782,14 +819,15 @@ impl<B: Backend> Engine<B> {
         wanted.truncate(MAX_STREAMS as usize);
         let wanted: Vec<MonitorInfo> = wanted.into_iter().cloned().collect();
 
-        let pictures: Vec<_> = wanted.iter().map(|m| self.picture_for(m)).collect();
+        let mut matched = HashSet::new();
+        let pictures: Vec<Picture> = wanted.iter().map(|m| self.picture_for(m, &mut matched)).collect();
         let demands: Vec<MonitorDemand> = wanted
             .iter()
             .zip(&pictures)
             .map(|(m, p)| MonitorDemand {
                 monitor_id: m.id,
-                stream_w: p.0,
-                stream_h: p.1,
+                stream_w: p.width,
+                stream_h: p.height,
                 priority: m.priority,
                 pinned: m.pinned_mode.pinned(),
                 force_fast: self.force_fast.contains(&m.id),
@@ -804,7 +842,7 @@ impl<B: Backend> Engine<B> {
         }
 
         let mut slots_changed = false;
-        for (m, (w, h, source, note)) in wanted.iter().zip(pictures) {
+        for (m, p) in wanted.iter().zip(pictures) {
             let Some(a) = assigned.iter().find(|a| a.monitor_id == m.id) else { continue };
             let before = self.cfg.slots.len();
             let slot = self.cfg.slot_for(m.id);
@@ -815,13 +853,14 @@ impl<B: Backend> Engine<B> {
                 monitor_name: m.name.clone(),
                 receiver_id: receiver_id.clone(),
                 slot,
-                source,
-                width: w,
-                height: h,
+                source: p.source,
+                match_mirror: p.match_mirror,
+                width: p.width,
+                height: p.height,
                 mode: a.mode,
                 bitrate_kbps: a.bitrate_kbps,
             };
-            let warning = a.warning.clone().or(note);
+            let warning = a.warning.clone().or(p.note);
             match self.streams.get_mut(&m.id) {
                 Some(s) if same_picture(&s.req, &req) => {
                     s.warning = warning;
@@ -1008,6 +1047,7 @@ impl<B: Backend> Engine<B> {
         let keys = self.cfg.keys.clone();
         let ev = self.ev_tx.clone();
         let name = peer.name.clone();
+        let peer_id = peer.id.clone();
         std::thread::spawn(move || {
             let targets: Vec<(SocketAddr, SocketAddr)> = match targets {
                 Targets::Manual(t) => t,
@@ -1031,7 +1071,7 @@ impl<B: Backend> Engine<B> {
                 let _ = s.set_nodelay(true);
                 match noise::initiate(&mut s, &keys, &peer.public_key) {
                     Ok(hs) => {
-                        let _ = ev.send(Ev::Connected { stream: s, hs: Box::new(hs), video, name });
+                        let _ = ev.send(Ev::Connected { stream: s, hs: Box::new(hs), video, peer_id, name });
                         return;
                     }
                     Err(e) => {
@@ -1127,6 +1167,15 @@ impl<B: Backend> Engine<B> {
     }
 }
 
+/// What a stream shows and at which size.
+struct Picture {
+    width: u32,
+    height: u32,
+    source: StreamSource,
+    match_mirror: bool,
+    note: Option<String>,
+}
+
 /// Where to connect: a typed-in address, or a PC found over mDNS.
 enum Targets {
     Manual(Vec<(SocketAddr, SocketAddr)>),
@@ -1157,5 +1206,10 @@ fn candidate_ips(addrs: &[IpAddr], host: &str) -> Vec<IpAddr> {
 }
 
 fn same_picture(a: &StreamRequest, b: &StreamRequest) -> bool {
-    a.source == b.source && a.width == b.width && a.height == b.height && a.mode == b.mode && a.slot == b.slot
+    a.source == b.source
+        && a.match_mirror == b.match_mirror
+        && a.width == b.width
+        && a.height == b.height
+        && a.mode == b.mode
+        && a.slot == b.slot
 }

@@ -25,6 +25,8 @@ input#pin { font-size: 18px; letter-spacing: .15em; width: 130px; padding: 6px 8
 button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--accent);
   color: #fff; cursor: pointer; }
 button.link { background: none; color: var(--accent); border: none; padding: 0; margin-right: 12px; }
+button.danger { background: var(--bad); border-color: var(--bad); margin: 0 8px; }
+#forget-box { margin: 6px 0; }
 select { font: inherit; }
 .monitor { border-top: 1px solid var(--line); padding: 10px 0 6px; }
 .monitor:first-child { border-top: none; padding-top: 0; }
