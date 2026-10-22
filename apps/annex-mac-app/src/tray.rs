@@ -140,8 +140,8 @@ fn build(app: &AppHandle, tray: &TrayIcon, s: &Status) -> tauri::Result<Built> {
             let item = CheckMenuItem::with_id(app, p(&format!("src:{}", d.uuid)), format!("Mirror {}", d.name), true, false, None::<&str>)?;
             sources.push((d.uuid.clone(), item));
         }
-        let fit = CheckMenuItem::with_id(app, p("fit:fit"), "Fit, with black bars", true, false, None::<&str>)?;
-        let fill = CheckMenuItem::with_id(app, p("fit:match"), "Match the PC monitor's shape", true, false, None::<&str>)?;
+        let fit = CheckMenuItem::with_id(app, p("fit:fit"), "Fit, with black bars on the PC", true, false, None::<&str>)?;
+        let fill = CheckMenuItem::with_id(app, p("fit:match"), "Match the PC monitor (best as your main screen)", true, false, None::<&str>)?;
         let info = MenuItem::new(app, "", false, None::<&str>)?;
         let stats = MenuItem::new(app, "", false, None::<&str>)?;
 

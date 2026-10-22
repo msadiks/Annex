@@ -54,9 +54,9 @@ function renderMonitors(v) {
             <option value="fast"${m.mode === 'fast' ? ' selected' : ''}>Fast (video, motion)</option>
           </select></label>
           <label>Shows <select data-k="source">${mirrorOpts(m.source)}</select></label>
-          ${m.source === 'extend' ? '' : `<label>Shape <select data-k="match">
-            <option value="fit"${m.mirror_match ? '' : ' selected'}>Fit, with black bars</option>
-            <option value="match"${m.mirror_match ? ' selected' : ''}>Match the PC monitor</option>
+          ${m.source === 'extend' ? '' : `<label title="Match fills the PC monitor and is sharper; your Mac's own screen gets the bars instead.">Mirror shape <select data-k="match">
+            <option value="fit"${m.mirror_match ? '' : ' selected'}>Fit, with black bars on the PC</option>
+            <option value="match"${m.mirror_match ? ' selected' : ''}>Match the PC monitor (best as your main screen)</option>
           </select></label>`}
         </div>
         ${m.enabled ? streamLine(s) : ''}
