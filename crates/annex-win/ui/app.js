@@ -218,7 +218,7 @@ function placeThumb(c, mode) {
 function updateCard(c, m, s) {
   setText(c.name, m.name);
   setText(c.meta, `${m.width}×${m.height} · ${m.refresh} Hz${m.primary ? " · Main display" : ""}`);
-  if (document.activeElement !== c.toggle) c.toggle.checked = m.enabled;
+  c.toggle.checked = m.enabled;
   c.root.classList.toggle("on", m.enabled);
   c.root.classList.toggle("live", !!m.stream);
   c.mode = m.mode;
@@ -286,7 +286,7 @@ function renderMonitors(s) {
 
 function renderOptions(s) {
   for (const [id, on] of [["opt-autostart", s.options.autostart], ["opt-stats", s.options.stats]]) {
-    if (document.activeElement !== $(id)) $(id).checked = on;
+    $(id).checked = on;
   }
   const links = $("peer-links");
   const sig = `${s.peer}|${!!s.pairing}`;
@@ -313,6 +313,17 @@ function renderOptions(s) {
 }
 
 // --- Entry points ------------------------------------------------------------
+
+// When the window opens, the web view can put focus on the first control,
+// which scrolls the page down to Options. Start at the top instead.
+const openedAt = Date.now();
+let touched = false;
+for (const t of ["pointerdown", "keydown"]) document.addEventListener(t, () => { touched = true; }, true);
+document.addEventListener("focusin", (e) => {
+  if (touched || Date.now() - openedAt > 2000) return;
+  e.target.blur();
+  window.scrollTo(0, 0);
+});
 
 window.annex = {
   update(s) {
