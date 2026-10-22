@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "annex-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "annex-proto",
  "serde",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "annex-mac"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "annex-core",
  "annex-proto",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "annex-mac-app"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "annex-core",
  "annex-mac",
@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "annex-proto"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.3.4",
@@ -133,7 +133,7 @@ dependencies = [
 
 [[package]]
 name = "annex-sender"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "annex-core",
  "annex-proto",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "annex-testsrc"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "annex-core",
  "annex-proto",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "annex-win"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "annex-core",
  "annex-proto",

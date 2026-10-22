@@ -22,7 +22,11 @@ and staples the ticket to it, so it opens without Gatekeeper warnings.
    the Apple secrets. Open the workflow run, choose *Review deployments*, tick
    `release` and *Approve and deploy*.
 4. When both jobs are green, open the draft release, write the notes, check
-   that all three files are attached and publish it.
+   that all three files are attached and publish it. If you ran the workflow
+   by hand, publishing creates the tag and so starts the workflow again; that
+   run sees the release is already published and builds nothing. (Running it
+   by hand with the tag of a published release fails for the same reason, so
+   the files people download are never swapped.)
 
 Expect the Mac job to take roughly 10 to 20 minutes, mostly the build and
 Apple's notarization queue. If it fails or you reject it, the draft is still
