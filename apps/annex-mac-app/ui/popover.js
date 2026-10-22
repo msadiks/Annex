@@ -11,7 +11,7 @@ const MODES = [['auto', 'Automatic'], ['sharp', 'Sharp'], ['fast', 'Fast']];
 
 function sources(v) {
   const one = v.mac_displays.length === 1;
-  return [['extend', 'New display']].concat(v.mac_displays.map((d) => [d.uuid, one ? 'Mirror Mac' : `Mirror ${d.name}`]));
+  return [['extend', 'New display']].concat(v.mac_displays.map((d) => [d.uuid, one ? 'Mirror' : `Mirror ${d.name}`]));
 }
 
 function makeCard(m) {

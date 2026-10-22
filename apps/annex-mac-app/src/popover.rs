@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSWindow};
+use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSWindow};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -25,10 +25,13 @@ pub struct Popover {
     /// When a lost focus hid the popover. The click on the icon that took the
     /// focus away should not open it again.
     hidden_at: Mutex<Option<Instant>>,
+    /// The icon that was clicked and its screen's visible frame, from
+    /// `icon_frame`.
+    anchor: Mutex<Option<(NSRect, NSRect)>>,
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    app.manage(Popover { height: Mutex::new(320.0), hidden_at: Mutex::new(None) });
+    app.manage(Popover { height: Mutex::new(320.0), hidden_at: Mutex::new(None), anchor: Mutex::new(None) });
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("popover.html".into()))
         .title("Annex")
         .inner_size(WIDTH, 320.0)
@@ -60,6 +63,7 @@ pub fn toggle(app: &AppHandle) {
     if state.hidden_at.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_millis(300)) {
         return;
     }
+    *state.anchor.lock().unwrap() = icon_frame(app);
     place(app);
     let Some(mtm) = MainThreadMarker::new() else { return };
     let ns_app = NSApplication::sharedApplication(mtm);
@@ -73,6 +77,25 @@ pub fn toggle(app: &AppHandle) {
     }
     highlight(app, true);
     let _ = w.eval("window.annexShown && annexShown()");
+    // The click's mouse-up and the app's activation finish after this, and
+    // can take the highlight and the keyboard back; claim them again after.
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(80));
+        let h = handle.clone();
+        let _ = handle.run_on_main_thread(move || settle(&h));
+    });
+}
+
+/// Makes the open popover the key window with the page taking the keys (so
+/// Esc works without a click first), and highlights the icon.
+fn settle(app: &AppHandle) {
+    let Some(w) = window(app).filter(|w| w.is_visible().unwrap_or(false)) else { return };
+    if let Some(ns) = ns_window(&w) {
+        ns.makeKeyWindow();
+    }
+    let _ = w.as_ref().set_focus();
+    highlight(app, true);
 }
 
 /// Hides the popover. `blurred`: it lost the focus to something else.
@@ -108,18 +131,31 @@ fn ns_window(w: &WebviewWindow) -> Option<&NSWindow> {
     Some(unsafe { &*(ptr as *const NSWindow) })
 }
 
-/// The frame of the menu bar icon and the visible frame of its screen, in
-/// AppKit coordinates (origin at the bottom left, in points).
+/// The frame of the clicked menu bar icon and the visible frame of its
+/// screen, in AppKit coordinates (origin at the bottom left, in points).
 fn icon_frame(app: &AppHandle) -> Option<(NSRect, NSRect)> {
     let tray = app.tray_by_id(tray::ID)?;
     tray.with_inner_tray_icon(|t| {
         let mtm = MainThreadMarker::new()?;
         let window = t.ns_status_item()?.button(mtm)?.window()?;
-        let screen = window.screen()?;
-        Some((window.frame(), screen.visibleFrame()))
+        let (icon, home) = (window.frame(), window.screen()?);
+        // Each screen's menu bar shows the icon, but the button reports only
+        // one of them (after a right-click, often the wrong one). Move it to
+        // the screen under the pointer, at the same place from its top right.
+        let mouse = NSEvent::mouseLocation();
+        let from = home.frame();
+        let screen = NSScreen::screens(mtm).iter().find(|s| contains(s.frame(), mouse)).unwrap_or(home);
+        let to = screen.frame();
+        let x = to.origin.x + to.size.width - (from.origin.x + from.size.width - icon.origin.x);
+        let y = to.origin.y + to.size.height - (from.origin.y + from.size.height - icon.origin.y);
+        Some((NSRect::new(NSPoint::new(x, y), icon.size), screen.visibleFrame()))
     })
     .ok()
     .flatten()
+}
+
+fn contains(r: NSRect, p: NSPoint) -> bool {
+    p.x >= r.origin.x && p.x <= r.origin.x + r.size.width && p.y >= r.origin.y && p.y <= r.origin.y + r.size.height
 }
 
 fn highlight(app: &AppHandle, on: bool) {
@@ -129,6 +165,7 @@ fn highlight(app: &AppHandle, on: bool) {
                 && let Some(button) = item.button(mtm)
             {
                 button.highlight(on);
+                button.setHighlighted(on);
             }
         });
     }
@@ -136,7 +173,8 @@ fn highlight(app: &AppHandle, on: bool) {
 
 /// Puts the popover under the icon, centred on it and kept on the screen.
 fn place(app: &AppHandle) {
-    let (Some(w), Some((icon, screen))) = (window(app), icon_frame(app)) else { return };
+    let anchor = *app.state::<Popover>().anchor.lock().unwrap();
+    let (Some(w), Some((icon, screen))) = (window(app), anchor) else { return };
     let Some(ns) = ns_window(&w) else { return };
     let top = icon.origin.y - GAP;
     let room = top - screen.origin.y - MARGIN;
