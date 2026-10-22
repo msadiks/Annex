@@ -1,9 +1,23 @@
-# Annex
+<p align="center">
+  <img src="assets/icon-1024.png" width="112" alt="">
+</p>
 
-Annex turns a Windows PC's monitors into extra displays for a Mac, over your
-local network. It behaves like a cable would, minus the cable: turn a PC
-monitor on in Annex and the Mac sees a new display; turn it off and the
-display is unplugged.
+<h1 align="center">Annex</h1>
+
+<p align="center">
+  Use a Windows PC's monitors as extra displays for your Mac, over your local network.
+</p>
+
+<p align="center">
+  <a href="https://github.com/msadiks/annex-app/releases/latest"><img src="https://img.shields.io/github/v/release/msadiks/annex-app" alt="Latest release"></a>
+  <a href="https://github.com/msadiks/annex-app/actions/workflows/ci.yml"><img src="https://github.com/msadiks/annex-app/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="#licence"><img src="https://img.shields.io/badge/licence-MIT%20or%20Apache--2.0-blue" alt="Licence: MIT or Apache-2.0"></a>
+</p>
+
+Annex behaves like a cable would, minus the cable: turn a PC monitor on in
+Annex and the Mac sees a new display; turn it off and the display is
+unplugged. It's free and open source, and it works entirely on your own
+network, with no account, cloud service or relay.
 
 - **Sharp** mode sends exact colour (4:4:4) for text and UI, **Fast** mode is
   plain 4:2:0 for video and motion. The first display gets Sharp, others Fast,
@@ -12,9 +26,15 @@ display is unplugged.
   Mac display.
 - Hardware HEVC on both ends (VideoToolbox on the Mac, D3D11VA on the PC),
   forward error correction, and encryption for everything on the wire.
-- LAN only. Nothing leaves your network and there is no account or relay.
+- LAN only. Nothing leaves your network.
 
-The design is in [docs/spec.md](docs/spec.md).
+## Project status
+
+Annex 1.0 is the first public release. It has only been tested on a handful of
+machines so far, so expect rough edges on other hardware, and please
+[report what you find](https://github.com/msadiks/annex-app/issues/new/choose).
+Results from GPUs and Macs we haven't tried are one of the most useful
+contributions right now.
 
 ## Requirements
 
@@ -27,7 +47,7 @@ The design is in [docs/spec.md](docs/spec.md).
 ## Install and connect
 
 1. Download `Annex.exe` and `Annex-mac-arm64.dmg` from the
-   [latest release](https://github.com/msadiks/annex-app/releases).
+   [latest release](https://github.com/msadiks/annex-app/releases/latest).
 2. **PC:** run `Annex.exe`. It lives in the system tray (the monitor icon).
    - Windows may show a SmartScreen warning for a new app: choose
      *More info → Run anyway*.
@@ -72,14 +92,41 @@ network. Turn on *Start at login* on both sides to make it permanent.
   workarounds exist (for example the *Amnesia* app, or editing the `replayd`
   plist), but they are unsupported.
 - **Logs:** PC: tray menu › *Open log folder* (`%LOCALAPPDATA%\Annex\logs`).
-  Mac: `~/Library/Logs/Annex/annex.log`.
+  Mac: `~/Library/Logs/Annex/annex.log`. Set `ANNEX_LOG=debug` for more
+  detail.
 - **Reset:** delete `%APPDATA%\Annex\config.toml` on the PC or
   `~/Library/Application Support/Annex/config.toml` on the Mac and pair again.
+
+Still stuck? [Open a bug report](https://github.com/msadiks/annex-app/issues/new/choose)
+with both logs attached.
+
+## How it works
+
+The Mac creates a virtual display (or picks an existing one to mirror),
+captures it with ScreenCaptureKit, packs the pixels on the GPU with Metal and
+encodes HEVC with VideoToolbox. Frames travel over UDP with forward error
+correction and per-packet encryption, while a TCP control channel (Noise
+handshake, PIN pairing) handles discovery, stream setup and stats. The PC
+decodes with FFmpeg's D3D11VA decoder and draws full screen on the chosen
+monitor. The full design, including the rules every change must respect, is
+in [docs/spec.md](docs/spec.md).
+
+| Path | What it is |
+| --- | --- |
+| `crates/annex-proto` | Wire format, FEC, encryption, control messages, discovery, pairing. Platform independent. |
+| `crates/annex-core` | Resolution rules, mode negotiation, stats, config. Platform independent. |
+| `crates/annex-sender` | Sender engine: sessions, streams, packetizing and pacing. Platform independent. |
+| `crates/annex-mac` | Mac capture and encode: virtual displays, ScreenCaptureKit, Metal, VideoToolbox. Also `annex-mac-cli` for testing. |
+| `crates/annex-win` | Windows receiver, the single `Annex.exe`. |
+| `crates/annex-testsrc` | Test sender that plays pre-encoded HEVC, so the PC side can be checked without a Mac. |
+| `apps/annex-mac-app` | Mac menu bar app (Tauri 2) around `annex-mac`. |
+| `tools/` | FFmpeg build, icon generation, Mac release script. |
+| `docs/` | Design spec, measurements, release process. |
 
 ## Building from source
 
 Everything is Rust (edition 2024). The protocol, core logic and sender engine
-are platform independent:
+are platform independent and build anywhere:
 
 ```sh
 cargo test -p annex-proto -p annex-core -p annex-sender
@@ -98,7 +145,7 @@ cargo build --release --target x86_64-pc-windows-gnu -p annex-win
 The result is a single `annex.exe` that needs only system DLLs.
 
 **Mac sender** (`crates/annex-mac`) and app (`apps/annex-mac-app`, Tauri 2),
-on a Mac:
+on an Apple silicon Mac:
 
 ```sh
 cargo build --release -p annex-mac          # includes annex-mac-cli for testing
@@ -114,34 +161,26 @@ cargo run --release -p annex-testsrc -- gen --size 1920x1080 --mode sharp --out 
 cargo run --release -p annex-testsrc -- run --addr <pc-ip> --media media --pin <PIN> --enable 0
 ```
 
-### Signing and releases
+Maintainers: signing and publishing a release is described in
+[docs/releasing.md](docs/releasing.md).
 
-Push a tag such as `v1.0.0` and the *Release* workflow builds `Annex.exe` into
-a draft GitHub release.
+## Contributing
 
-The Mac app is signed and notarized on a Mac, so Apple credentials never go to
-GitHub. Once, store a notarization profile (it asks for an app-specific
-password and keeps it in the keychain):
+Bug reports, hardware test results, documentation and code are all welcome.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request,
+and open an issue first for anything bigger than a bug fix. Everyone taking
+part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-```sh
-xcrun notarytool store-credentials annex --apple-id <apple id> --team-id <team id>
-```
-
-Then for each release, with a *Developer ID Application* certificate in the
-keychain:
-
-```sh
-tools/mac/release.sh        # writes dist/Annex-mac-arm64.dmg, notarized and stapled
-```
-
-and attach `dist/Annex-mac-arm64.dmg` to the draft release. macOS ties the
-Screen Recording permission to the signing identity, so builds signed with the
-same certificate keep the permission across updates.
+Found a security problem? Please don't open a public issue; see
+[SECURITY.md](SECURITY.md).
 
 ## Licence
 
 Annex is licensed under either of [MIT](LICENSE-MIT) or
-[Apache-2.0](LICENSE-APACHE), at your option.
+[Apache-2.0](LICENSE-APACHE), at your option. Unless you explicitly state
+otherwise, any contribution you intentionally submit for inclusion in Annex,
+as defined in the Apache-2.0 licence, is dual licensed as above, without any
+additional terms or conditions.
 
 The Windows receiver statically links [FFmpeg](https://ffmpeg.org) (tag
 `n8.1.3`, configured LGPL-only with just the HEVC decoder and D3D11VA; see
