@@ -58,9 +58,10 @@ contributions right now.
    also lives in the system tray (the monitor icon).
    - Windows may show a SmartScreen warning for a new app: choose
      *More info → Run anyway*.
-   - The installer asks for admin once and adds a Windows Firewall rule for
-     Annex: private networks, plus public networks for devices on your local
-     subnet only. Annex uses TCP 48800 and UDP 48801.
+   - Setup installs Annex for your Windows account. When you click
+     *Install*, Windows asks for permission once, so setup can add a Windows
+     Firewall rule for Annex: private networks, plus public networks for
+     devices on your local subnet only. Annex uses TCP 48800 and UDP 48801.
    - The portable copy has no installer, so allow it when Windows Firewall
      asks. If the firewall still blocks the Mac (for example on a network
      Windows marks *Public*), the Annex window shows a banner with a button
