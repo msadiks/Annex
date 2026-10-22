@@ -1,0 +1,83 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check the [Troubleshooting](https://github.com/msadiks/annex-app#troubleshooting) section first, and search existing issues.
+        Security problems go through [private reporting](https://github.com/msadiks/annex-app/security/advisories/new), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Turn on the second PC monitor in Mirror mode
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Annex version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      description: Model and macOS version.
+      placeholder: "MacBook Air M3, macOS 27.0"
+    validations:
+      required: true
+  - type: input
+    id: pc
+    attributes:
+      label: PC
+      description: GPU, Windows version, and the resolution of the affected monitor.
+      placeholder: "AMD Radeon RX 6700, Windows 11 24H2, 2560x1080"
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - Both on Ethernet
+        - Mac on Wi-Fi, PC on Ethernet
+        - Mac on Ethernet, PC on Wi-Fi
+        - Both on Wi-Fi
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Display setup
+      multiple: true
+      options:
+        - Extend
+        - Mirror
+        - Sharp
+        - Fast
+        - Auto
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        PC: tray menu › Open log folder. Mac: `~/Library/Logs/Annex/annex.log`. Paste the part around the problem from both, or attach the files.
+        Remove anything private (names, paths, IP addresses you don't want public) first.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, photos of the PC screen, stats overlay numbers.
