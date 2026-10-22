@@ -29,7 +29,7 @@ env:
 
 # Every action is pinned to a full commit hash (the comment names its
 # release), so a moved tag can't change what runs next to the signing
-# certificate. Dependabot proposes updates (.github/dependabot.yml). Rust comes
+# certificate. Pins are updated by hand (docs/releasing.md). Rust comes
 # from the runner's own rustup, the Tauri CLI version is fixed in
 # tools/mac/release.sh and FFmpeg's commit in tools/ffmpeg/build-mingw.sh.
 jobs:

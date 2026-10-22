@@ -141,8 +141,9 @@ These live in the repository settings, not in its files, so check them once:
   bypass list). A tag push starts a release, so nobody else should be able to
   make one. A **branch** ruleset for `main` that blocks force pushes and
   deletion and requires a pull request with CI passing.
-- *Settings › Code security*: Dependabot alerts and security updates, secret
-  scanning with push protection, and private vulnerability reporting
+- *Settings › Code security*: Dependabot alerts (they only notify you; keep
+  Dependabot's version and security updates off, as pins are changed by hand),
+  secret scanning with push protection, and private vulnerability reporting
   ([SECURITY.md](../SECURITY.md) sends reporters there).
 - *Settings › General › Releases*: turn on immutable releases if it is
   offered, so a published release's files and tag can't be changed.
@@ -168,11 +169,21 @@ an exact version that can't change underneath it:
   refuses any other source. Releases always build it from source, never from
   CI's cache.
 
-[Dependabot](../.github/dependabot.yml) opens a weekly pull request for newer
-actions and crates, skipping versions less than 7 days old. Read what changed
-before merging one: a pin only protects you if updates get a look. The
-[Audit workflow](../.github/workflows/audit.yml) checks `Cargo.lock` against
-the RustSec advisory database on every dependency change and every Monday.
+Nothing updates these on its own. To move one to a newer version, change it
+by hand and read what changed first, preferring a release that has been out
+for a week or so (hijacked releases are usually caught within days):
+
+- **An action:** find the commit of the new release with
+  `git ls-remote https://github.com/<owner>/<action> "refs/tags/<version>*"`
+  (take the `^{}` line if there is one) and update the hash and the comment
+  everywhere the action appears.
+- **Crates:** `cargo update` (or `cargo update -p <crate>`), then commit
+  `Cargo.lock`.
+
+The [Audit workflow](../.github/workflows/audit.yml) checks `Cargo.lock` against
+the RustSec advisory database on every dependency change and every Monday, so
+a crate with a known vulnerability shows up as a failed run even when nothing
+else changed.
 
 The Windows files are not code-signed (Windows shows a SmartScreen warning).
 Signing them needs a code signing certificate; free options for open source

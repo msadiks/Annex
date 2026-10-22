@@ -21,8 +21,8 @@ env:
   TAURI_CLI_VERSION: 2.12.4
 
 # Every action is pinned to a full commit hash (the comment names its
-# release), so a moved tag can't change what runs. Dependabot proposes
-# updates (.github/dependabot.yml). Rust comes from the runner's own rustup.
+# release), so a moved tag can't change what runs. Pins are updated by hand
+# (docs/releasing.md). Rust comes from the runner's own rustup.
 jobs:
   test:
     name: Protocol and core tests
