@@ -178,32 +178,47 @@ fn overlaps(a: &RECT, b: &RECT) -> bool {
     a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
 }
 
-/// Keeps the window clear of Annex's full-screen displays (`covered`), which
-/// are topmost: moves it to a monitor without one, the primary if it can, or
-/// when every monitor shows a Mac display, keeps it above them.
-fn arrange(hwnd: HWND, covered: &[RECT]) {
+/// A monitor without one of Annex's full-screen displays (`covered`), the
+/// primary if it can.
+fn free_monitor(covered: &[RECT]) -> Option<MONITORINFO> {
+    let mut free: Vec<_> = monitors().into_iter().filter(|m| !covered.iter().any(|c| overlaps(c, &m.rcMonitor))).collect();
+    free.sort_by_key(|m| m.dwFlags & MONITORINFOF_PRIMARY == 0);
+    free.into_iter().next()
+}
+
+/// Moves the window off Annex's full-screen displays, which are topmost, to
+/// a free monitor. Returns false when every monitor shows a Mac display.
+fn place(hwnd: HWND, covered: &[RECT]) -> bool {
     let mut r = RECT::default();
-    let mut topmost = false;
     unsafe {
         let _ = GetWindowRect(hwnd, &mut r);
-        if covered.iter().any(|c| overlaps(c, &r)) {
-            let mut free: Vec<_> = monitors().into_iter().filter(|m| !covered.iter().any(|c| overlaps(c, &m.rcMonitor))).collect();
-            free.sort_by_key(|m| m.dwFlags & MONITORINFOF_PRIMARY == 0);
-            match free.first() {
-                Some(m) => {
-                    let work = m.rcWork;
-                    let w = (r.right - r.left).min(work.right - work.left);
-                    let h = (r.bottom - r.top).min(work.bottom - work.top);
-                    let x = work.left + ((work.right - work.left) - w) / 2;
-                    let y = work.top + ((work.bottom - work.top) - h) / 2;
-                    let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-                }
-                None => topmost = true,
-            }
-        }
-        let after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    }
+    if !covered.iter().any(|c| overlaps(c, &r)) {
+        return true;
+    }
+    let Some(m) = free_monitor(covered) else { return false };
+    let work = m.rcWork;
+    let w = (r.right - r.left).min(work.right - work.left);
+    let h = (r.bottom - r.top).min(work.bottom - work.top);
+    let x = work.left + ((work.right - work.left) - w) / 2;
+    let y = work.top + ((work.bottom - work.top) - h) / 2;
+    unsafe {
+        let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    true
+}
+
+fn set_topmost(hwnd: HWND, on: bool) {
+    let after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    unsafe {
         let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+}
+
+/// For a window the user asked to see: on a free monitor, or above the Mac
+/// displays when every monitor shows one.
+fn arrange(hwnd: HWND, covered: &[RECT]) {
+    set_topmost(hwnd, !place(hwnd, covered));
 }
 
 impl Gui {
@@ -290,8 +305,33 @@ impl Gui {
         }
     }
 
-    pub fn arrange(&self, covered: &[RECT]) {
-        arrange(self.hwnd, covered);
+    /// Moves the window clear of the Mac displays after one opened or
+    /// closed. Returns false when every monitor shows one.
+    pub fn arrange(&self, covered: &[RECT]) -> bool {
+        let placed = place(self.hwnd, covered);
+        if placed {
+            set_topmost(self.hwnd, false);
+        }
+        placed
+    }
+
+    pub fn hide(&self) {
+        unsafe {
+            let _ = ShowWindow(self.hwnd, SW_HIDE);
+        }
+    }
+
+    /// Shows a window that [`Gui::hide`] put away, without taking focus, if
+    /// a monitor is free for it. Returns whether it did.
+    pub fn reappear(&self, covered: &[RECT]) -> bool {
+        if free_monitor(covered).is_none() || !place(self.hwnd, covered) {
+            return false;
+        }
+        set_topmost(self.hwnd, false);
+        unsafe {
+            let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+        }
+        true
     }
 
     pub fn visible(&self) -> bool {
