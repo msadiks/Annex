@@ -1,5 +1,5 @@
-//! Annex receiver: a Windows tray app that shows Mac displays on this PC's
-//! monitors.
+//! Annex receiver: a Windows app (window + tray icon) that shows Mac displays
+//! on this PC's monitors.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -8,7 +8,11 @@ mod app;
 #[cfg(windows)]
 mod ffmpeg;
 #[cfg(windows)]
+mod firewall;
+#[cfg(windows)]
 mod gpu;
+#[cfg(windows)]
+mod gui;
 #[cfg(windows)]
 mod misc;
 #[cfg(windows)]
@@ -26,9 +30,22 @@ mod wnd;
 
 #[cfg(windows)]
 fn main() {
-    if std::env::args().any(|a| a == "--version") {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version") {
         println!("annex {}", annex_proto::APP_VERSION);
         return;
+    }
+    // Run elevated by the installer, the uninstaller, or the window's
+    // "Allow" button.
+    let exe = std::env::current_exe().unwrap_or_default();
+    match args.first().map(String::as_str) {
+        Some("--allow-firewall") => std::process::exit(if firewall::allow(&exe, true) { 0 } else { 1 }),
+        Some("--allow-firewall=private") => std::process::exit(if firewall::allow(&exe, false) { 0 } else { 1 }),
+        Some("--remove-firewall") => {
+            firewall::remove(&exe);
+            return;
+        }
+        _ => {}
     }
     if let Err(e) = app::run() {
         tracing::error!("fatal: {e:#}");

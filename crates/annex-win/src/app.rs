@@ -1,5 +1,5 @@
-//! UI thread: tray menu, monitor list, output windows, pairing, and the glue
-//! between the session and the render threads.
+//! UI thread: tray menu, the Annex window, monitor list, output windows,
+//! pairing, and the glue between the session and the render threads.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -12,14 +12,18 @@ use annex_proto::discovery::{Advertiser, ReceiverAd};
 use annex_proto::pairing::{PeerIdentity, random_pin};
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, unbounded};
+use serde::Deserialize;
+use serde_json::json;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F12};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::firewall::{self, Status as Firewall};
 use crate::gpu::Gpu;
+use crate::gui::{self, Gui};
 use crate::monitors::{self, MonitorDesc};
 use crate::net::{self, Identity, Net, UdpCmd};
 use crate::pipeline::{self, PipeMsg, PipelineHandle};
@@ -30,6 +34,15 @@ use crate::{misc, wnd};
 const GRACE: Duration = Duration::from_secs(30);
 /// Pairing window (spec 8.2).
 const PAIRING_TIME: Duration = Duration::from_secs(120);
+/// How long a pairing result stays in the Annex window.
+const NOTICE_TIME: Duration = Duration::from_secs(6);
+/// Firewall re-check: often while the window shows a firewall problem (the
+/// user may be changing the network type in Settings), less often while it
+/// shows none, and rarely while it's closed.
+const FIREWALL_RECHECK_PROBLEM: Duration = Duration::from_secs(3);
+const FIREWALL_RECHECK_OPEN: Duration = Duration::from_secs(30);
+const FIREWALL_RECHECK_CLOSED: Duration = Duration::from_secs(300);
+const WEBVIEW2_DOWNLOAD: &str = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 
 pub enum UiCmd {
     SessionUp { peer_name: String },
@@ -44,6 +57,30 @@ pub enum UiCmd {
     PairingEnded(Option<String>),
     Warning(String),
     Menu(String),
+    /// A JSON command from the Annex window.
+    Gui(String),
+    ShowWindow,
+    Firewall(Firewall),
+}
+
+/// Commands the page in ui/ sends (see `send()` in app.js).
+#[derive(Deserialize)]
+#[serde(tag = "cmd", rename_all = "camelCase")]
+enum GuiCmd {
+    Ready,
+    Monitor { id: String, enabled: bool },
+    Mode { id: String, mode: String },
+    Source { id: String, source: String },
+    Pair,
+    CancelPairing,
+    Forget,
+    Stats { on: bool },
+    Autostart { on: bool },
+    Firewall,
+    NetworkSettings,
+    Logs,
+    Open { url: String },
+    Quit,
 }
 
 struct Output {
@@ -51,6 +88,15 @@ struct Output {
     pipe: Option<PipelineHandle>,
     stream_id: Option<u8>,
     rect: RECT,
+    stream: Option<StreamConfig>,
+}
+
+/// A pairing result shown for a few seconds.
+struct Notice {
+    ok: bool,
+    title: String,
+    text: String,
+    until: Instant,
 }
 
 struct App {
@@ -69,9 +115,17 @@ struct App {
     mac_displays: Vec<MacDisplay>,
     pin: Option<(HWND, Instant)>,
     pin_close_at: Option<Instant>,
+    pairing_until: Option<Instant>,
+    notice: Option<Notice>,
     advertiser: Option<Advertiser>,
     shapes: HashMap<u32, Arc<CursorShape>>,
     warning: Option<String>,
+    gui: Option<Gui>,
+    gui_pushed: String,
+    firewall: Firewall,
+    firewall_busy: bool,
+    firewall_checked: Instant,
+    ticks: u32,
     quit: bool,
 }
 
@@ -79,12 +133,16 @@ pub fn run() -> Result<()> {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
-    misc::init_logging();
-    tracing::info!(version = annex_proto::APP_VERSION, "Annex receiver starting");
+    let background = std::env::args().any(|a| a == misc::BACKGROUND_ARG);
     let Some(_instance) = misc::single_instance() else {
-        wnd::message_box("Annex is already running. Look for its icon in the notification area.");
+        if !background && !wnd::activate_running() {
+            wnd::message_box("Annex is already running. Look for its icon in the notification area.");
+        }
         return Ok(());
     };
+    misc::init_logging();
+    tracing::info!(version = annex_proto::APP_VERSION, portable = misc::portable_dir().is_some(), "Annex receiver starting");
+    misc::migrate_autostart();
     crate::ffmpeg::quiet_logs();
 
     let cfg_path = misc::data_dir().join("config.toml");
@@ -93,6 +151,7 @@ pub fn run() -> Result<()> {
 
     wnd::register_classes()?;
     let hidden = wnd::create_hidden()?;
+    gui::register(hidden)?;
     let (ui_tx, ui_rx) = unbounded();
     let shared = Arc::new(Shared::new(ui_tx, host_name.clone(), cfg.show_stats));
     shared.set_ui_hwnd(hidden);
@@ -156,10 +215,19 @@ pub fn run() -> Result<()> {
         let shared = shared.clone();
         MenuEvent::set_event_handler(Some(move |e: MenuEvent| shared.ui(UiCmd::Menu(e.id.0))));
     }
+    {
+        let shared = shared.clone();
+        TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                shared.ui(UiCmd::ShowWindow);
+            }
+        }));
+    }
     let tray = TrayIconBuilder::new()
         .with_tooltip("Annex")
         .with_icon(tray_icon_image())
         .with_menu(Box::new(Menu::new()))
+        .with_menu_on_left_click(false)
         .build()
         .context("creating tray icon")?;
 
@@ -184,12 +252,24 @@ pub fn run() -> Result<()> {
         mac_displays: Vec::new(),
         pin: None,
         pin_close_at: None,
+        pairing_until: None,
+        notice: None,
         advertiser,
         shapes: HashMap::new(),
         warning: None,
+        gui: None,
+        gui_pushed: String::new(),
+        firewall: Firewall::Checking,
+        firewall_busy: false,
+        firewall_checked: Instant::now(),
+        ticks: 0,
         quit: false,
     };
-    app.refresh_tray();
+    app.refresh();
+    app.check_firewall();
+    if !background {
+        app.show_gui(true);
+    }
     // Unattended testing: show the fixed dev PIN right away.
     if app.cfg.paired.is_none() && std::env::var_os("ANNEX_DEV_PIN").is_some() {
         app.start_pairing();
@@ -203,6 +283,11 @@ pub fn run() -> Result<()> {
                     WM_ANNEX_WAKE => app.drain(),
                     wnd::WM_ANNEX_DISPLAY_CHANGED => app.on_display_change(),
                     wnd::WM_ANNEX_CANCEL_PAIRING => app.stop_pairing(None),
+                    wnd::WM_ANNEX_SHOW => {
+                        app.show_gui(true);
+                    }
+                    wnd::WM_ANNEX_QUIT => app.quit = true,
+                    gui::WM_ANNEX_GUI_CLOSED => app.close_gui(),
                     WM_HOTKEY => app.toggle_stats(),
                     WM_TIMER => app.on_timer(),
                     _ => {}
@@ -260,7 +345,7 @@ impl App {
                 self.session_peer = Some(peer_name);
                 self.grace_until = None;
                 self.send_monitors();
-                self.refresh_tray();
+                self.refresh();
             }
             UiCmd::SessionDown { bye } => {
                 tracing::info!(bye, "Mac disconnected");
@@ -268,13 +353,14 @@ impl App {
                 self.mac_displays.clear();
                 for o in self.outputs.values_mut() {
                     o.stream_id = None;
+                    o.stream = None;
                 }
                 if bye {
                     self.close_all_outputs();
                 } else if !self.outputs.is_empty() {
                     self.grace_until = Some(Instant::now() + GRACE);
                 }
-                self.refresh_tray();
+                self.refresh();
             }
             UiCmd::StartStream(cfg) => self.start_stream(cfg),
             UiCmd::StopStream { stream_id } => {
@@ -283,11 +369,15 @@ impl App {
                 }
             }
             UiCmd::ModeChange { stream_id, mode } => {
-                if let Some(o) = self.outputs.values().find(|o| o.stream_id == Some(stream_id)) {
+                if let Some(o) = self.outputs.values_mut().find(|o| o.stream_id == Some(stream_id)) {
                     if let Some(p) = &o.pipe {
                         p.send(PipeMsg::Mode(mode));
                     }
+                    if let Some(c) = &mut o.stream {
+                        c.mode = mode;
+                    }
                 }
+                self.push_gui();
             }
             UiCmd::CursorShape(s) => {
                 for o in self.outputs.values() {
@@ -302,7 +392,7 @@ impl App {
             }
             UiCmd::MacDisplays(d) => {
                 self.mac_displays = d;
-                self.refresh_tray();
+                self.refresh();
             }
             UiCmd::SetMonitorPrefs { monitor_id, enabled, pinned_mode, source } => {
                 self.update_prefs(monitor_id, |p| {
@@ -319,26 +409,44 @@ impl App {
             }
             UiCmd::Paired(peer) => {
                 *self.paired_key.lock().unwrap() = Some(peer.public_key);
+                let name = peer.name.clone();
                 self.cfg.paired = Some(PairedPeer::from(peer));
                 self.save();
-                self.show_pin_message("Paired", "Your Mac is paired. It connects automatically from now on.");
                 self.stop_pairing_mode();
-                self.refresh_tray();
+                self.pairing_message(true, &format!("Paired with {name}"), "It connects automatically from now on.");
             }
             UiCmd::PairingEnded(reason) => {
                 self.stop_pairing_mode();
-                if let Some(r) = reason {
-                    self.show_pin_message("Not paired", &r);
-                } else {
-                    self.close_pin();
+                match reason {
+                    Some(r) => self.pairing_message(false, "Not paired", &r),
+                    None => {
+                        self.close_pin();
+                        self.refresh();
+                    }
                 }
             }
             UiCmd::Warning(t) => {
                 tracing::warn!("sender warning: {t}");
                 self.warning = Some(t);
-                self.refresh_tray();
+                self.refresh();
             }
             UiCmd::Menu(id) => self.on_menu(&id),
+            UiCmd::Gui(json) => match serde_json::from_str::<GuiCmd>(&json) {
+                Ok(c) => self.on_gui(c),
+                Err(e) => tracing::warn!("bad message from the window: {e}"),
+            },
+            UiCmd::ShowWindow => {
+                self.show_gui(true);
+            }
+            UiCmd::Firewall(status) => {
+                if status != self.firewall {
+                    tracing::info!(status = status.key(), "firewall");
+                }
+                self.firewall = status;
+                self.firewall_busy = false;
+                self.firewall_checked = Instant::now();
+                self.refresh();
+            }
         }
     }
 
@@ -359,7 +467,7 @@ impl App {
             self.close_output(id);
         }
         self.send_monitors();
-        self.refresh_tray();
+        self.refresh();
     }
 
     fn save(&self) {
@@ -434,7 +542,8 @@ impl App {
             for s in self.shapes.values() {
                 pipe.send(PipeMsg::CursorShape(s.clone()));
             }
-            self.outputs.insert(m.id, Output { hwnd, pipe: Some(pipe), stream_id: None, rect: m.rect });
+            self.outputs.insert(m.id, Output { hwnd, pipe: Some(pipe), stream_id: None, rect: m.rect, stream: None });
+            self.arrange_gui();
         }
         let out = self.outputs.get_mut(&m.id).unwrap();
         let pipe = out.pipe.as_ref().unwrap();
@@ -448,9 +557,11 @@ impl App {
         });
         tracing::info!(stream = cfg.stream_id, monitor = %m.name, w = cfg.stream_w, h = cfg.stream_h, mode = cfg.mode.as_str(), "stream start");
         out.stream_id = Some(cfg.stream_id);
+        out.stream = Some(cfg.clone());
         pipe.send(PipeMsg::Attach(cfg));
         self.grace_until = None;
         self.update_power();
+        self.push_gui();
     }
 
     fn close_output(&mut self, monitor_id: u64) {
@@ -460,8 +571,10 @@ impl App {
             }
             drop(o.pipe.take());
             wnd::destroy(o.hwnd);
+            self.arrange_gui();
         }
         self.update_power();
+        self.push_gui();
     }
 
     fn close_all_outputs(&mut self) {
@@ -503,11 +616,14 @@ impl App {
         self.monitors = fresh;
         self.save();
         self.send_monitors();
-        self.refresh_tray();
+        self.refresh();
     }
 
     fn on_timer(&mut self) {
+        // Wake-ups can be swallowed while the web view runs a modal loop.
+        self.drain();
         let now = Instant::now();
+        self.ticks = self.ticks.wrapping_add(1);
         if let Some(t) = self.grace_until {
             if now >= t {
                 tracing::info!("grace period over: unplugging");
@@ -520,17 +636,31 @@ impl App {
                 self.close_pin();
             }
         }
-        if let Some((hwnd, until)) = self.pin {
-            if self.pin_close_at.is_none() {
-                if now >= until {
-                    self.stop_pairing_mode();
-                    self.show_pin_message("Pairing timed out", "Choose Pair with a Mac… in the Annex menu to try again.");
-                } else {
-                    let left = until - now;
-                    wnd::set_pin_text(&self.pin_display(), &self.pin_hint(left));
-                    wnd::invalidate(hwnd);
-                }
+        if let Some(until) = self.pairing_until {
+            if now >= until {
+                self.stop_pairing_mode();
+                self.pairing_message(false, "Pairing timed out", "Choose Pair with a Mac to try again.");
+            } else if let Some((hwnd, _)) = self.pin.filter(|_| self.pin_close_at.is_none()) {
+                wnd::set_pin_text(&self.pin_display(), &self.pin_hint(until - now));
+                wnd::invalidate(hwnd);
             }
+        }
+        if self.notice.as_ref().is_some_and(|n| now >= n.until) {
+            self.notice = None;
+            self.push_gui();
+        }
+        let gui_open = self.gui.as_ref().is_some_and(|g| g.visible());
+        // Once a second: live stats for the window.
+        if gui_open && self.ticks.is_multiple_of(4) {
+            self.push_gui();
+        }
+        let recheck = match (gui_open, self.firewall.needs_action()) {
+            (true, true) => FIREWALL_RECHECK_PROBLEM,
+            (true, false) => FIREWALL_RECHECK_OPEN,
+            (false, _) => FIREWALL_RECHECK_CLOSED,
+        };
+        if now.duration_since(self.firewall_checked) >= recheck {
+            self.check_firewall();
         }
     }
 
@@ -552,14 +682,22 @@ impl App {
         let pin = std::env::var("ANNEX_DEV_PIN").ok().filter(|p| p.len() == 6).unwrap_or_else(random_pin);
         let until = Instant::now() + PAIRING_TIME;
         *self.shared.pairing.lock().unwrap() = Some(Pairing { pin, until, attempts: 0 });
+        self.pairing_until = Some(until);
+        self.notice = None;
         self.advertise(true);
+        self.close_pin();
+        // The PIN goes in the Annex window; the full-screen PIN is the
+        // fallback when the window can't open.
+        if self.show_gui(false) {
+            self.refresh();
+            return;
+        }
         let rect = self.monitors.iter().find(|m| m.primary).or(self.monitors.first()).map(|m| m.rect).unwrap_or(RECT {
             left: 0,
             top: 0,
             right: 1280,
             bottom: 720,
         });
-        self.close_pin();
         let hint = self.pin_hint(PAIRING_TIME);
         match wnd::show_pin(rect, &self.pin_display(), &hint) {
             Ok(h) => self.pin = Some((h, until)),
@@ -569,23 +707,30 @@ impl App {
 
     fn stop_pairing_mode(&mut self) {
         *self.shared.pairing.lock().unwrap() = None;
+        self.pairing_until = None;
         self.advertise(false);
     }
 
     fn stop_pairing(&mut self, reason: Option<&str>) {
         self.stop_pairing_mode();
         match reason {
-            Some(r) => self.show_pin_message("Pairing stopped", r),
-            None => self.close_pin(),
+            Some(r) => self.pairing_message(false, "Pairing stopped", r),
+            None => {
+                self.close_pin();
+                self.refresh();
+            }
         }
     }
 
-    fn show_pin_message(&mut self, title: &str, text: &str) {
+    /// Shows a pairing result on the PIN screen and in the Annex window.
+    fn pairing_message(&mut self, ok: bool, title: &str, text: &str) {
         if let Some((hwnd, _)) = self.pin {
             wnd::set_pin_text(title, text);
             wnd::invalidate(hwnd);
             self.pin_close_at = Some(Instant::now() + Duration::from_secs(3));
         }
+        self.notice = Some(Notice { ok, title: title.into(), text: text.into(), until: Instant::now() + NOTICE_TIME });
+        self.refresh();
     }
 
     fn close_pin(&mut self) {
@@ -617,7 +762,7 @@ impl App {
                 p.send(PipeMsg::ShowStats(on));
             }
         }
-        self.refresh_tray();
+        self.refresh();
     }
 
     fn on_menu(&mut self, id: &str) {
@@ -652,23 +797,246 @@ impl App {
                     }
                 }
             }
-            ["pair"] => self.start_pairing(),
-            ["forget"] => {
-                self.shared.send(ControlMsg::Bye);
-                self.cfg.paired = None;
-                *self.paired_key.lock().unwrap() = None;
-                self.save();
-                self.refresh_tray();
+            ["open"] | ["firewall"] => {
+                self.show_gui(true);
             }
+            ["pair"] => self.start_pairing(),
+            ["forget"] => self.forget(),
             ["stats"] => self.toggle_stats(),
             ["autostart"] => {
                 misc::set_autostart(!misc::autostart_enabled());
-                self.refresh_tray();
+                self.refresh();
             }
-            ["firewall"] => misc::add_firewall_rule(),
             ["logs"] => misc::open_folder(&misc::log_dir()),
             ["quit"] => self.quit = true,
             _ => {}
+        }
+    }
+
+    fn on_gui(&mut self, cmd: GuiCmd) {
+        let id = |s: &str| s.parse::<u64>().ok();
+        match cmd {
+            GuiCmd::Ready => {
+                self.gui_pushed.clear();
+                self.push_gui();
+            }
+            GuiCmd::Monitor { id: mid, enabled } => {
+                if let Some(mid) = id(&mid) {
+                    self.update_prefs(mid, |p| p.enabled = enabled);
+                }
+            }
+            GuiCmd::Mode { id: mid, mode } => {
+                let mode = match mode.as_str() {
+                    "sharp" => ModePref::Sharp,
+                    "fast" => ModePref::Fast,
+                    _ => ModePref::Auto,
+                };
+                if let Some(mid) = id(&mid) {
+                    self.update_prefs(mid, |p| p.pinned_mode = mode);
+                }
+            }
+            GuiCmd::Source { id: mid, source } => {
+                let source = if source == "extend" { SourcePref::Extend } else { SourcePref::Mirror { display_uuid: source } };
+                if let Some(mid) = id(&mid) {
+                    self.update_prefs(mid, |p| p.source = source);
+                }
+            }
+            GuiCmd::Pair => self.start_pairing(),
+            GuiCmd::CancelPairing => self.stop_pairing(None),
+            GuiCmd::Forget => self.forget(),
+            GuiCmd::Stats { on } => {
+                if on != self.shared.show_stats() {
+                    self.toggle_stats();
+                }
+            }
+            GuiCmd::Autostart { on } => {
+                misc::set_autostart(on);
+                self.refresh();
+            }
+            GuiCmd::Firewall => self.fix_firewall(),
+            GuiCmd::NetworkSettings => misc::open_url("ms-settings:network-status"),
+            GuiCmd::Logs => misc::open_folder(&misc::log_dir()),
+            GuiCmd::Open { url } => gui::open_external(&url),
+            GuiCmd::Quit => self.quit = true,
+        }
+    }
+
+    fn forget(&mut self) {
+        self.shared.send(ControlMsg::Bye);
+        self.close_all_outputs();
+        self.grace_until = None;
+        self.cfg.paired = None;
+        *self.paired_key.lock().unwrap() = None;
+        self.save();
+        self.refresh();
+    }
+
+    /// Opens (or brings forward) the Annex window. `explain` reports a
+    /// missing WebView2 runtime. Returns false if the window can't open.
+    fn show_gui(&mut self, explain: bool) -> bool {
+        let covered = self.covered();
+        if self.gui.is_none() {
+            match Gui::open(&self.shared, &covered) {
+                Ok(g) => {
+                    self.gui = Some(g);
+                    self.gui_pushed.clear();
+                    self.check_firewall();
+                }
+                Err(e) => {
+                    tracing::error!("Annex window: {e:#}");
+                    if explain
+                        && wnd::ask(
+                            "Annex needs the Microsoft Edge WebView2 Runtime to show its window. \
+                             It keeps running in the notification area meanwhile.\n\nDownload WebView2 now?",
+                        )
+                    {
+                        misc::open_url(WEBVIEW2_DOWNLOAD);
+                    }
+                    return false;
+                }
+            }
+        }
+        if let Some(g) = &self.gui {
+            g.show(&covered);
+        }
+        self.push_gui();
+        true
+    }
+
+    /// Screen areas under Annex's full-screen displays.
+    fn covered(&self) -> Vec<RECT> {
+        self.outputs.values().map(|o| o.rect).collect()
+    }
+
+    /// Keeps the window out from under a display that just opened or closed.
+    fn arrange_gui(&self) {
+        if let Some(g) = self.gui.as_ref().filter(|g| g.visible()) {
+            g.arrange(&self.covered());
+        }
+    }
+
+    fn close_gui(&mut self) {
+        // Closing the window doesn't cancel pairing started from the tray,
+        // but one started in the window ends with it.
+        if self.pin.is_none() && self.pairing_until.is_some() {
+            self.stop_pairing_mode();
+        }
+        self.gui = None;
+        self.refresh();
+    }
+
+    fn check_firewall(&mut self) {
+        if self.firewall_busy {
+            return;
+        }
+        self.firewall_busy = true;
+        self.firewall_checked = Instant::now();
+        let shared = self.shared.clone();
+        let (tcp, udp) = (self.cfg.control_port, self.cfg.video_port);
+        let _ = std::thread::Builder::new()
+            .name("annex-firewall".into())
+            .spawn(move || shared.ui(UiCmd::Firewall(firewall::check(tcp, udp))));
+    }
+
+    fn fix_firewall(&mut self) {
+        if self.firewall_busy {
+            return;
+        }
+        self.firewall_busy = true;
+        self.firewall = Firewall::Checking;
+        self.push_gui();
+        let shared = self.shared.clone();
+        let (tcp, udp) = (self.cfg.control_port, self.cfg.video_port);
+        let _ = std::thread::Builder::new().name("annex-firewall".into()).spawn(move || {
+            firewall::fix();
+            shared.ui(UiCmd::Firewall(firewall::check(tcp, udp)));
+        });
+    }
+
+    fn refresh(&mut self) {
+        self.refresh_tray();
+        self.push_gui();
+    }
+
+    /// Sends the window everything it shows. Skipped when nothing changed.
+    fn push_gui(&mut self) {
+        let Some(gui) = &self.gui else { return };
+        let now = Instant::now();
+        let monitors: Vec<_> = self
+            .monitors
+            .iter()
+            .map(|m| {
+                let p = self.prefs(m.id);
+                let out = self.outputs.get(&m.id);
+                let stream = out.and_then(|o| o.stream.as_ref());
+                let stats = out.and_then(|o| o.stream_id).and_then(|s| self.shared.live_stats(s));
+                json!({
+                    "id": m.id.to_string(),
+                    "name": m.name,
+                    "width": m.width(),
+                    "height": m.height(),
+                    "refresh": (m.refresh_mhz + 500) / 1000,
+                    "primary": m.primary,
+                    "enabled": p.map(|p| p.enabled).unwrap_or(false),
+                    "mode": match p.map(|p| p.pinned_mode).unwrap_or_default() {
+                        ModePref::Auto => "auto",
+                        ModePref::Sharp => "sharp",
+                        ModePref::Fast => "fast",
+                    },
+                    "source": match p.map(|p| p.source.clone()).unwrap_or_default() {
+                        SourcePref::Extend => "extend".to_string(),
+                        SourcePref::Mirror { display_uuid } => display_uuid,
+                    },
+                    "stream": stream.map(|c| json!({
+                        "width": c.stream_w,
+                        "height": c.stream_h,
+                        "mode": c.mode.as_str(),
+                    })),
+                    "stats": stats.map(|s| json!({
+                        "fps": (s.fps * 10.0).round() / 10.0,
+                        "mbps": (s.mbps * 10.0).round() / 10.0,
+                        "loss": (s.loss_percent * 100.0).round() / 100.0,
+                        "latency": s.latency_ms.map(|v| v.round()),
+                    })),
+                })
+            })
+            .collect();
+        let pairing = self.pairing_until.map(|until| {
+            json!({
+                "pin": self.pin_display(),
+                "secondsLeft": until.saturating_duration_since(now).as_secs(),
+                "total": PAIRING_TIME.as_secs(),
+            })
+        });
+        let state = json!({
+            "version": annex_proto::APP_VERSION,
+            "host": self.shared.host_name,
+            "status": match (&self.cfg.paired, &self.session_peer) {
+                (None, _) => "unpaired",
+                (Some(_), Some(_)) => "connected",
+                (Some(_), None) => "waiting",
+            },
+            "peer": self.cfg.paired.as_ref().map(|p| p.name.clone()),
+            "warning": self.warning,
+            "pairing": pairing,
+            "notice": self.notice.as_ref().map(|n| json!({ "ok": n.ok, "title": n.title, "text": n.text })),
+            "monitors": monitors,
+            "macDisplays": self.mac_displays.iter().map(|d| json!({ "uuid": d.uuid, "name": d.name })).collect::<Vec<_>>(),
+            "options": {
+                "autostart": misc::autostart_enabled(),
+                "stats": self.shared.show_stats(),
+            },
+            "firewall": self.firewall.key(),
+            "gpu": {
+                "name": *self.shared.gpu_name.lock().unwrap(),
+                "hevc": self.shared.hevc_ok.load(std::sync::atomic::Ordering::Relaxed),
+            },
+            "portable": misc::portable_dir().is_some(),
+        })
+        .to_string();
+        if state != self.gui_pushed {
+            gui.push(&state);
+            self.gui_pushed = state;
         }
     }
 
@@ -682,9 +1050,14 @@ impl App {
 
     fn refresh_tray(&mut self) {
         let menu = Menu::new();
+        let _ = menu.append(&MenuItem::with_id("open", "Open Annex", true, None));
+        let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&MenuItem::with_id("status", self.status_line(), false, None));
         if let Some(w) = &self.warning {
             let _ = menu.append(&MenuItem::with_id("warning", format!("⚠ {w}"), false, None));
+        }
+        if self.firewall.needs_action() {
+            let _ = menu.append(&MenuItem::with_id("firewall", "⚠ Windows Firewall is blocking your Mac. Fix…", true, None));
         }
         let _ = menu.append(&PredefinedMenuItem::separator());
         for m in &self.monitors {
@@ -732,7 +1105,6 @@ impl App {
         }
         let _ = menu.append(&CheckMenuItem::with_id("stats", "Stats overlay\tCtrl+Shift+F12", true, self.shared.show_stats(), None));
         let _ = menu.append(&CheckMenuItem::with_id("autostart", "Start at login", true, misc::autostart_enabled(), None));
-        let _ = menu.append(&MenuItem::with_id("firewall", "Allow through Windows Firewall…", true, None));
         let _ = menu.append(&MenuItem::with_id("logs", "Open log folder", true, None));
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&MenuItem::with_id("quit", "Quit Annex", true, None));
@@ -741,6 +1113,7 @@ impl App {
     }
 
     fn shutdown(&mut self) {
+        self.gui = None;
         self.shared.send(ControlMsg::Bye);
         std::thread::sleep(Duration::from_millis(150));
         self.close_all_outputs();

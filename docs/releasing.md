@@ -1,26 +1,33 @@
 # Releasing
 
-For maintainers. A release is one draft GitHub release holding `Annex.exe`
-and `Annex-mac-arm64.dmg`, both built by the
-[Release workflow](../.github/workflows/release.yml). The Mac job signs the
+For maintainers. A release is one draft GitHub release holding
+`Annex-windows-x64-setup.exe`, `Annex-windows-x64-portable.zip` and
+`Annex-mac-arm64.dmg`, all built by the
+[Release workflow](../.github/workflows/release.yml). The Windows job
+cross-builds `annex.exe` and packages it with
+[`tools/windows/package.sh`](../tools/windows/package.sh) (NSIS installer and
+portable zip). The Mac job signs the
 app with the project's Developer ID certificate, has Apple notarize the .dmg
 and staples the ticket to it, so it opens without Gatekeeper warnings.
 
 ## Each release
 
-1. Bump the version in `Cargo.toml` (`[workspace.package]`) and
-   `apps/annex-mac-app/tauri.conf.json`, and merge that to `main`.
+1. Bump the version in `Cargo.toml` (`[workspace.package]`; the Windows
+   installer takes its version from there),
+   `apps/annex-mac-app/tauri.conf.json` and
+   `crates/annex-win/resources/annex.rc`, and merge that to `main`.
 2. Push a tag such as `v1.1.0` (or run the *Release* workflow by hand from the
    Actions tab with the tag name).
 3. The **mac** job waits for approval, because it is the only job that can read
    the Apple secrets. Open the workflow run, choose *Review deployments*, tick
    `release` and *Approve and deploy*.
 4. When both jobs are green, open the draft release, write the notes, check
-   that both files are attached and publish it.
+   that all three files are attached and publish it.
 
 Expect the Mac job to take roughly 10 to 20 minutes, mostly the build and
 Apple's notarization queue. If it fails or you reject it, the draft is still
-made with `Annex.exe`, and you can add a .dmg signed by hand (see the end of
+made with the Windows installer and portable zip, and you can add a .dmg
+signed by hand (see the end of
 this page). CI on every pull request also uploads an unsigned
 .dmg (`annex-mac-unsigned-dmg`), which is handy for checking the installer
 window before a release.

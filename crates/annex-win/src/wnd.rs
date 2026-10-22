@@ -15,6 +15,9 @@ use crate::shared::WM_ANNEX_WAKE;
 
 pub const WM_ANNEX_DISPLAY_CHANGED: u32 = WM_ANNEX_WAKE + 1;
 pub const WM_ANNEX_CANCEL_PAIRING: u32 = WM_ANNEX_WAKE + 2;
+/// From a second copy of Annex being started: open the window.
+pub const WM_ANNEX_SHOW: u32 = WM_ANNEX_WAKE + 4;
+pub const WM_ANNEX_QUIT: u32 = WM_ANNEX_WAKE + 5;
 
 thread_local! {
     static HIDDEN: RefCell<HWND> = const { RefCell::new(HWND(std::ptr::null_mut())) };
@@ -27,11 +30,18 @@ fn instance() -> windows::Win32::Foundation::HINSTANCE {
 
 unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
-        if msg == WM_DISPLAYCHANGE {
-            let _ = PostMessageW(Some(hwnd), WM_ANNEX_DISPLAY_CHANGED, WPARAM(0), LPARAM(0));
-            return LRESULT(0);
+        match msg {
+            WM_DISPLAYCHANGE => {
+                let _ = PostMessageW(Some(hwnd), WM_ANNEX_DISPLAY_CHANGED, WPARAM(0), LPARAM(0));
+                LRESULT(0)
+            }
+            // The installer and uninstaller close Annex this way.
+            WM_CLOSE => {
+                let _ = PostMessageW(Some(hwnd), WM_ANNEX_QUIT, WPARAM(0), LPARAM(0));
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
-        DefWindowProcW(hwnd, msg, wp, lp)
     }
 }
 
@@ -169,6 +179,20 @@ pub fn create_output(rect: RECT) -> Result<HWND> {
     }
 }
 
+/// Asks the copy of Annex that is already running to open its window.
+/// Returns false if there is none to ask.
+pub fn activate_running() -> bool {
+    unsafe {
+        let Ok(hwnd) = FindWindowW(w!("AnnexHidden"), PCWSTR::null()) else { return false };
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        // We were just started by the user, so we may hand over the right to
+        // take the foreground.
+        let _ = AllowSetForegroundWindow(pid);
+        PostMessageW(Some(hwnd), WM_ANNEX_SHOW, WPARAM(0), LPARAM(0)).is_ok()
+    }
+}
+
 pub fn destroy(hwnd: HWND) {
     unsafe {
         let _ = DestroyWindow(hwnd);
@@ -214,4 +238,10 @@ pub fn message_box(text: &str) {
     unsafe {
         MessageBoxW(None, PCWSTR(t.as_ptr()), w!("Annex"), MB_OK | MB_ICONINFORMATION);
     }
+}
+
+/// Yes/No question; true for Yes.
+pub fn ask(text: &str) -> bool {
+    let t: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe { MessageBoxW(None, PCWSTR(t.as_ptr()), w!("Annex"), MB_YESNO | MB_ICONINFORMATION) == IDYES }
 }

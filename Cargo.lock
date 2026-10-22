@@ -169,6 +169,9 @@ dependencies = [
  "embed-resource",
  "font8x8",
  "parking_lot",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
  "socket2",
  "thiserror 2.0.21",
  "tracing",
@@ -176,6 +179,7 @@ dependencies = [
  "tray-icon 0.26.1",
  "uuid",
  "windows",
+ "wry",
 ]
 
 [[package]]

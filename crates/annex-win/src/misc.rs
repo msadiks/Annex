@@ -1,14 +1,15 @@
-//! Small OS integrations: single instance, autostart, firewall rule, keeping
-//! the display awake, logging.
+//! Small OS integrations: single instance, autostart, keeping the display
+//! awake, data folders (installed or portable), logging.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows::Win32::System::Power::{ES_CONTINUOUS, ES_DISPLAY_REQUIRED, SetThreadExecutionState};
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{PCWSTR, w};
 
 fn wide(s: &str) -> Vec<u16> {
@@ -37,21 +38,43 @@ pub fn keep_display_awake(on: bool) {
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const RUN_VALUE: PCWSTR = w!("Annex");
 
+/// Passed by the login item: start in the tray without opening the window.
+pub const BACKGROUND_ARG: &str = "--background";
+
 fn exe_path() -> String {
     std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default()
 }
 
-pub fn autostart_enabled() -> bool {
+fn autostart_value() -> Option<String> {
     unsafe {
         let mut size = 0u32;
-        RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE, RRF_RT_REG_SZ, None, None, Some(&mut size)).is_ok()
+        RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE, RRF_RT_REG_SZ, None, None, Some(&mut size)).ok().ok()?;
+        let mut buf = vec![0u16; size as usize / 2 + 1];
+        RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as *mut _), Some(&mut size)).ok().ok()?;
+        let n = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..n]))
+    }
+}
+
+pub fn autostart_enabled() -> bool {
+    autostart_value().is_some()
+}
+
+/// 1.0 wrote the login item without `--background`, which now opens the
+/// window at every login.
+pub fn migrate_autostart() {
+    if let Some(v) = autostart_value()
+        && !v.contains(BACKGROUND_ARG)
+        && v.trim_matches('"').eq_ignore_ascii_case(&exe_path())
+    {
+        set_autostart(true);
     }
 }
 
 pub fn set_autostart(on: bool) {
     unsafe {
         if on {
-            let v = wide(&format!("\"{}\"", exe_path()));
+            let v = wide(&format!("\"{}\" {BACKGROUND_ARG}", exe_path()));
             let _ = RegSetKeyValueW(
                 HKEY_CURRENT_USER,
                 RUN_KEY,
@@ -66,34 +89,51 @@ pub fn set_autostart(on: bool) {
     }
 }
 
-/// Adds an inbound allow rule for this executable on private networks
-/// (prompts for elevation).
-pub fn add_firewall_rule() {
-    let args = format!(
-        "advfirewall firewall add rule name=\"Annex\" dir=in action=allow program=\"{}\" enable=yes profile=private,domain",
-        exe_path()
-    );
-    let a = wide(&args);
-    unsafe {
-        ShellExecuteW(None, w!("runas"), w!("netsh"), PCWSTR(a.as_ptr()), None, SW_HIDE);
-    }
+/// Portable mode: with `portable.txt` next to Annex.exe, settings, logs and
+/// caches live in a `data` folder beside it instead of the user profile.
+pub fn portable_dir() -> Option<&'static PathBuf> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        dir.join("portable.txt").is_file().then(|| dir.join("data"))
+    })
+    .as_ref()
 }
 
+/// Settings: `%APPDATA%\Annex`.
 pub fn data_dir() -> PathBuf {
     if let Ok(d) = std::env::var("ANNEX_CONFIG_DIR") {
         return PathBuf::from(d);
     }
+    if let Some(p) = portable_dir() {
+        return p.clone();
+    }
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Annex")
 }
 
+/// Logs and the window's web view cache: `%LOCALAPPDATA%\Annex`.
+pub fn local_dir() -> PathBuf {
+    if let Some(p) = portable_dir() {
+        return p.clone();
+    }
+    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Annex")
+}
+
 pub fn log_dir() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("Annex").join("logs")
+    local_dir().join("logs")
 }
 
 pub fn open_folder(path: &std::path::Path) {
-    let p = wide(&path.display().to_string());
+    let _ = std::fs::create_dir_all(path);
+    open_url(&path.display().to_string());
+}
+
+/// Opens a folder, a web page or an `ms-settings:` page.
+pub fn open_url(target: &str) {
+    let p = wide(target);
     unsafe {
-        ShellExecuteW(None, w!("open"), PCWSTR(p.as_ptr()), None, None, windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL);
+        ShellExecuteW(None, w!("open"), PCWSTR(p.as_ptr()), None, None, SW_SHOWNORMAL);
     }
 }
 
