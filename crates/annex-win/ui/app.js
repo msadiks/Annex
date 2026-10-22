@@ -123,9 +123,12 @@ function renderBanners(s) {
 function renderPairing(s) {
   const card = $("pairing");
   const p = s.pairing;
+  const appeared = card.hidden && !!p;
   card.hidden = !p;
   clearInterval(pinTimer);
   if (!p) return;
+  // Pairing can start from the footer link, far below the PIN.
+  if (appeared) card.scrollIntoView({ behavior: "smooth", block: "center" });
   const pin = $("pin");
   if (pin.dataset.pin !== p.pin) {
     pin.dataset.pin = p.pin;
@@ -195,7 +198,7 @@ function monitorCard(m) {
     el("div", { class: "mon-head" }, glyph, el("div", { class: "mon-name" }, name, meta), toggle),
     el("div", { class: "mon-more" }, el("div", {},
       el("div", { class: "mon-settings" },
-        el("label", { class: "field" }, "Mode", seg),
+        el("div", { class: "field" }, el("span", { text: "Mode", "aria-hidden": "true" }), seg),
         el("label", { class: "field grow" }, "Source", source)),
       stats)));
   return { root, toggle, seg, thumb, source, name, meta, stats };
