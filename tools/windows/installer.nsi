@@ -53,7 +53,7 @@ VIAddVersionKey "LegalCopyright" "MIT OR Apache-2.0"
 !define MUI_COMPONENTSPAGE_NODESC
 
 !define MUI_WELCOMEPAGE_TITLE "Annex ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "Annex turns this PC's monitors into extra displays for your Mac, over your local network.$\r$\n$\r$\nSetup installs Annex and lets it through Windows Firewall on private networks, so your Mac can connect.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "Annex turns this PC's monitors into extra displays for your Mac, over your local network.$\r$\n$\r$\nSetup installs Annex and lets it through Windows Firewall for devices on your local network, so your Mac can connect.$\r$\n$\r$\nClick Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
@@ -127,7 +127,7 @@ Section "Annex" SecMain
   SetShellVarContext all
   CreateShortcut "$SMPROGRAMS\Annex.lnk" "$INSTDIR\Annex.exe" "" "$INSTDIR\Annex.exe" 0 SW_SHOWNORMAL "" "Use this PC's monitors as Mac displays"
 
-  DetailPrint "Allowing Annex through Windows Firewall (private networks)"
+  DetailPrint "Allowing Annex through Windows Firewall (local network)"
   nsExec::ExecToLog '"$INSTDIR\Annex.exe" --allow-firewall'
   Pop $0
   ${If} $0 != 0

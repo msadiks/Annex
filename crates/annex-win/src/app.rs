@@ -36,9 +36,11 @@ const GRACE: Duration = Duration::from_secs(30);
 const PAIRING_TIME: Duration = Duration::from_secs(120);
 /// How long a pairing result stays in the Annex window.
 const NOTICE_TIME: Duration = Duration::from_secs(6);
-/// Firewall re-check while the window is open (the user may be changing the
-/// network type in Settings) and while it's closed.
-const FIREWALL_RECHECK_OPEN: Duration = Duration::from_secs(10);
+/// Firewall re-check: often while the window shows a firewall problem (the
+/// user may be changing the network type in Settings), less often while it
+/// shows none, and rarely while it's closed.
+const FIREWALL_RECHECK_PROBLEM: Duration = Duration::from_secs(3);
+const FIREWALL_RECHECK_OPEN: Duration = Duration::from_secs(30);
 const FIREWALL_RECHECK_CLOSED: Duration = Duration::from_secs(300);
 const WEBVIEW2_DOWNLOAD: &str = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
 
@@ -74,7 +76,7 @@ enum GuiCmd {
     Forget,
     Stats { on: bool },
     Autostart { on: bool },
-    Firewall { public: bool },
+    Firewall,
     NetworkSettings,
     Logs,
     Open { url: String },
@@ -541,6 +543,7 @@ impl App {
                 pipe.send(PipeMsg::CursorShape(s.clone()));
             }
             self.outputs.insert(m.id, Output { hwnd, pipe: Some(pipe), stream_id: None, rect: m.rect, stream: None });
+            self.arrange_gui();
         }
         let out = self.outputs.get_mut(&m.id).unwrap();
         let pipe = out.pipe.as_ref().unwrap();
@@ -568,6 +571,7 @@ impl App {
             }
             drop(o.pipe.take());
             wnd::destroy(o.hwnd);
+            self.arrange_gui();
         }
         self.update_power();
         self.push_gui();
@@ -650,7 +654,11 @@ impl App {
         if gui_open && self.ticks.is_multiple_of(4) {
             self.push_gui();
         }
-        let recheck = if gui_open { FIREWALL_RECHECK_OPEN } else { FIREWALL_RECHECK_CLOSED };
+        let recheck = match (gui_open, self.firewall.needs_action()) {
+            (true, true) => FIREWALL_RECHECK_PROBLEM,
+            (true, false) => FIREWALL_RECHECK_OPEN,
+            (false, _) => FIREWALL_RECHECK_CLOSED,
+        };
         if now.duration_since(self.firewall_checked) >= recheck {
             self.check_firewall();
         }
@@ -845,7 +853,7 @@ impl App {
                 misc::set_autostart(on);
                 self.refresh();
             }
-            GuiCmd::Firewall { public } => self.fix_firewall(public),
+            GuiCmd::Firewall => self.fix_firewall(),
             GuiCmd::NetworkSettings => misc::open_url("ms-settings:network-status"),
             GuiCmd::Logs => misc::open_folder(&misc::log_dir()),
             GuiCmd::Open { url } => gui::open_external(&url),
@@ -866,8 +874,9 @@ impl App {
     /// Opens (or brings forward) the Annex window. `explain` reports a
     /// missing WebView2 runtime. Returns false if the window can't open.
     fn show_gui(&mut self, explain: bool) -> bool {
+        let covered = self.covered();
         if self.gui.is_none() {
-            match Gui::open(&self.shared) {
+            match Gui::open(&self.shared, &covered) {
                 Ok(g) => {
                     self.gui = Some(g);
                     self.gui_pushed.clear();
@@ -888,10 +897,22 @@ impl App {
             }
         }
         if let Some(g) = &self.gui {
-            g.show();
+            g.show(&covered);
         }
         self.push_gui();
         true
+    }
+
+    /// Screen areas under Annex's full-screen displays.
+    fn covered(&self) -> Vec<RECT> {
+        self.outputs.values().map(|o| o.rect).collect()
+    }
+
+    /// Keeps the window out from under a display that just opened or closed.
+    fn arrange_gui(&self) {
+        if let Some(g) = self.gui.as_ref().filter(|g| g.visible()) {
+            g.arrange(&self.covered());
+        }
     }
 
     fn close_gui(&mut self) {
@@ -917,7 +938,7 @@ impl App {
             .spawn(move || shared.ui(UiCmd::Firewall(firewall::check(tcp, udp))));
     }
 
-    fn fix_firewall(&mut self, public: bool) {
+    fn fix_firewall(&mut self) {
         if self.firewall_busy {
             return;
         }
@@ -927,7 +948,7 @@ impl App {
         let shared = self.shared.clone();
         let (tcp, udp) = (self.cfg.control_port, self.cfg.video_port);
         let _ = std::thread::Builder::new().name("annex-firewall".into()).spawn(move || {
-            firewall::fix(public);
+            firewall::fix();
             shared.ui(UiCmd::Firewall(firewall::check(tcp, udp)));
         });
     }

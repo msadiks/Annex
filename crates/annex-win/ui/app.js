@@ -78,19 +78,19 @@ const FIREWALL = {
   norule: {
     title: "Windows Firewall needs to let your Mac in",
     text: "Your Mac connects to this PC over the network, and Windows Firewall blocks it until Annex is allowed. Windows will ask for permission once.",
-    actions: [["Allow Annex", { cmd: "firewall", public: false }, true]],
+    actions: [["Allow Annex", { cmd: "firewall" }, true]],
   },
   blocked: {
     title: "Windows Firewall is blocking Annex",
     text: "A firewall rule stops your Mac from reaching this PC (this happens if the Windows Firewall prompt was cancelled). Allow Annex to fix it.",
-    actions: [["Allow Annex", { cmd: "firewall", public: false }, true]],
+    actions: [["Allow Annex", { cmd: "firewall" }, true]],
   },
   public: {
-    title: "This network is set to Public",
-    text: "Windows Firewall keeps Annex closed on public networks. If this is your home or office network, set it to Private in Windows Settings.",
+    title: "Windows Firewall blocks Annex on this network",
+    text: "This PC's network is set to Public, and Annex is only allowed on private networks. Allow it for devices on your local network, or set the network to Private in Windows Settings.",
     actions: [
-      ["Open network settings", { cmd: "networkSettings" }, true],
-      ["Allow on public networks too", { cmd: "firewall", public: true }, false],
+      ["Allow on my local network", { cmd: "firewall" }, true],
+      ["Open network settings", { cmd: "networkSettings" }, false],
     ],
   },
 };
@@ -162,6 +162,9 @@ function renderNotice(s) {
 // --- Monitors ----------------------------------------------------------------
 
 const cards = new Map();
+// Mac display names by uuid, kept while the Mac is away so a mirrored
+// monitor still says what it mirrors.
+const macNames = new Map();
 const MODES = [["auto", "Auto"], ["sharp", "Sharp"], ["fast", "Fast"]];
 
 function monitorCard(m) {
@@ -193,7 +196,7 @@ function monitorCard(m) {
     el("div", { class: "mon-more" }, el("div", {},
       el("div", { class: "mon-settings" },
         el("label", { class: "field" }, "Mode", seg),
-        el("label", { class: "field" }, "Source", source)),
+        el("label", { class: "field grow" }, "Source", source)),
       stats)));
   return { root, toggle, seg, thumb, source, name, meta, stats };
 }
@@ -218,8 +221,11 @@ function updateCard(c, m, s) {
   c.mode = m.mode;
   placeThumb(c, m.mode);
 
+  for (const d of s.macDisplays) macNames.set(d.uuid, d.name);
   const opts = [["extend", "Extend: new Mac display"], ...s.macDisplays.map((d) => [d.uuid, `Mirror ${d.name}`])];
-  if (m.source !== "extend" && !opts.some(([v]) => v === m.source)) opts.push([m.source, "Mirror (Mac display not connected)"]);
+  if (m.source !== "extend" && !opts.some(([v]) => v === m.source)) {
+    opts.push([m.source, macNames.has(m.source) ? `Mirror ${macNames.get(m.source)}` : "Mirror a Mac display"]);
+  }
   const sig = opts.map((o) => o.join("=")).join("|");
   if (c.source.dataset.sig !== sig) {
     c.source.dataset.sig = sig;

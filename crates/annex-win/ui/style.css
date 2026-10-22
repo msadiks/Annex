@@ -154,6 +154,8 @@ button, select { font: inherit; color: inherit; }
 .mon-more > div { overflow: hidden; }
 .mon-settings { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 2px 16px 12px 62px; align-items: center; }
 .field { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.field.grow { flex: 1 1 180px; min-width: 0; }
+.field.grow select { flex: 1; min-width: 0; }
 .stats {
   display: flex; gap: 6px; padding: 9px 16px 10px 62px; border-top: 1px solid var(--line);
   font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); flex-wrap: wrap; align-items: center;
@@ -175,7 +177,7 @@ button, select { font: inherit; color: inherit; }
 
 select {
   border: 1px solid var(--line-strong); border-radius: 4px; background: var(--control); padding: 3px 8px; min-height: 28px;
-  font-size: 13px; max-width: 220px;
+  font-size: 13px; max-width: 280px; text-overflow: ellipsis;
 }
 select option { background: var(--card); color: var(--text); }
 

@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
 use windows::Win32::Foundation::{COLORREF, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
-use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH};
+use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumDisplayMonitors, GetMonitorInfoW, HBRUSH, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
@@ -37,7 +37,8 @@ thread_local! {
 
 pub struct Gui {
     pub hwnd: HWND,
-    webview: WebView,
+    /// Dropped before the window is destroyed.
+    webview: Option<WebView>,
     _context: WebContext,
 }
 
@@ -157,8 +158,58 @@ pub fn register(hidden: HWND) -> Result<()> {
     Ok(())
 }
 
+fn monitors() -> Vec<MONITORINFO> {
+    unsafe extern "system" fn add(m: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
+        let list = unsafe { &mut *(data.0 as *mut Vec<MONITORINFO>) };
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if unsafe { GetMonitorInfoW(m, &mut info) }.as_bool() {
+            list.push(info);
+        }
+        BOOL::from(true)
+    }
+    let mut list = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(add), LPARAM(&mut list as *mut Vec<MONITORINFO> as isize));
+    }
+    list
+}
+
+fn overlaps(a: &RECT, b: &RECT) -> bool {
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+}
+
+/// Keeps the window clear of Annex's full-screen displays (`covered`), which
+/// are topmost: moves it to a monitor without one, the primary if it can, or
+/// when every monitor shows a Mac display, keeps it above them.
+fn arrange(hwnd: HWND, covered: &[RECT]) {
+    let mut r = RECT::default();
+    let mut topmost = false;
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut r);
+        if covered.iter().any(|c| overlaps(c, &r)) {
+            let mut free: Vec<_> = monitors().into_iter().filter(|m| !covered.iter().any(|c| overlaps(c, &m.rcMonitor))).collect();
+            free.sort_by_key(|m| m.dwFlags & MONITORINFOF_PRIMARY == 0);
+            match free.first() {
+                Some(m) => {
+                    let work = m.rcWork;
+                    let w = (r.right - r.left).min(work.right - work.left);
+                    let h = (r.bottom - r.top).min(work.bottom - work.top);
+                    let x = work.left + ((work.right - work.left) - w) / 2;
+                    let y = work.top + ((work.bottom - work.top) - h) / 2;
+                    let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                None => topmost = true,
+            }
+        }
+        let after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
 impl Gui {
-    pub fn open(shared: &Arc<Shared>) -> Result<Gui> {
+    /// Creates and shows the window, then loads the page into it. `covered`
+    /// is where Annex's displays are (see [`arrange`]).
+    pub fn open(shared: &Arc<Shared>, covered: &[RECT]) -> Result<Gui> {
         load_webview2()?;
         let dpi = unsafe { GetDpiForSystem() } as i32;
         let (w, h) = (WIDTH * dpi / 96, HEIGHT * dpi / 96);
@@ -185,6 +236,12 @@ impl Gui {
             )?
         };
         style_frame(hwnd);
+        // Up and in front before the web view starts, which takes a moment.
+        arrange(hwnd, covered);
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
+        }
 
         let dark = dark_mode();
         let (r, g, b) = background(dark);
@@ -213,20 +270,28 @@ impl Gui {
                 return Err(e).context("creating the web view");
             }
         };
-        Ok(Gui { hwnd, webview, _context: context })
+        Ok(Gui { hwnd, webview: Some(webview), _context: context })
     }
 
     /// Shows the window and brings it to the front.
-    pub fn show(&self) {
+    pub fn show(&self, covered: &[RECT]) {
         unsafe {
             if IsIconic(self.hwnd).as_bool() {
                 let _ = ShowWindow(self.hwnd, SW_RESTORE);
             } else {
                 let _ = ShowWindow(self.hwnd, SW_SHOW);
             }
+            // After restoring: a minimized window has no useful position.
+            self.arrange(covered);
             let _ = SetForegroundWindow(self.hwnd);
         }
-        let _ = self.webview.focus();
+        if let Some(w) = &self.webview {
+            let _ = w.focus();
+        }
+    }
+
+    pub fn arrange(&self, covered: &[RECT]) {
+        arrange(self.hwnd, covered);
     }
 
     pub fn visible(&self) -> bool {
@@ -235,12 +300,15 @@ impl Gui {
 
     /// Hands the page a new state (a JSON object).
     pub fn push(&self, state: &str) {
-        let _ = self.webview.evaluate_script(&format!("window.annex && annex.update({state});"));
+        if let Some(w) = &self.webview {
+            let _ = w.evaluate_script(&format!("window.annex && annex.update({state});"));
+        }
     }
 }
 
 impl Drop for Gui {
     fn drop(&mut self) {
+        self.webview = None;
         unsafe {
             let _ = DestroyWindow(self.hwnd);
         }

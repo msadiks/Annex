@@ -203,17 +203,26 @@ fn netsh(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// `annex.exe --allow-firewall[=public]`, run elevated (by the installer or
-/// via [`fix`]): replaces every rule for this executable with one inbound
-/// allow rule for private and domain networks, plus public if asked.
+/// `annex.exe --allow-firewall[=private]`, run elevated (by the installer or
+/// via [`fix`]): replaces every rule for this executable with an inbound
+/// allow rule for private and domain networks and, unless `public` is false,
+/// one for public networks limited to the local subnet. Windows 11 marks new
+/// networks Public, and Annex only talks to paired Macs on the LAN anyway.
 pub fn allow(exe: &Path, public: bool) -> bool {
     remove(exe);
     let program = format!("program={}", exe.display());
-    let profile = if public { "profile=private,domain,public" } else { "profile=private,domain" };
-    netsh(&[
-        "advfirewall", "firewall", "add", "rule", "name=Annex", "dir=in", "action=allow", &program, "enable=yes", profile,
-        "description=Lets your Mac connect to Annex on this PC.",
-    ])
+    let mut ok = netsh(&[
+        "advfirewall", "firewall", "add", "rule", "name=Annex", "dir=in", "action=allow", &program, "enable=yes",
+        "profile=private,domain", "description=Lets your Mac connect to Annex on this PC.",
+    ]);
+    if public {
+        ok &= netsh(&[
+            "advfirewall", "firewall", "add", "rule", "name=Annex (public networks)", "dir=in", "action=allow", &program,
+            "enable=yes", "profile=public", "remoteip=localsubnet",
+            "description=Lets your Mac connect to Annex on public networks, from this PC's own subnet only.",
+        ]);
+    }
+    ok
 }
 
 /// `annex.exe --remove-firewall`: deletes every rule for this executable.
@@ -224,9 +233,9 @@ pub fn remove(exe: &Path) -> bool {
 
 /// Re-runs Annex elevated (one UAC prompt) to fix the rules and waits for it.
 /// Returns false if the user declined.
-pub fn fix(public: bool) -> bool {
+pub fn fix() -> bool {
     let exe: Vec<u16> = exe_path().encode_utf16().chain(std::iter::once(0)).collect();
-    let args = if public { w!("--allow-firewall=public") } else { w!("--allow-firewall") };
+    let args = w!("--allow-firewall");
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS,
