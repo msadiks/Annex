@@ -1,29 +1,32 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use annex_proto::control::{ModePref, SourcePref, VideoMode};
 use annex_sender::{ConnState, Engine, EngineHandle, EngineOptions, PairingState};
-use crossbeam_channel::Sender;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSWindow};
 use serde::Serialize;
 use tauri::menu::{AboutMetadata, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::TrayIconBuilder;
-use tauri::{ActivationPolicy, AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::window::Color;
+use tauri::{
+    ActivationPolicy, AppHandle, Manager, State, Theme, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
+};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
-use crate::tray;
+use crate::{popover, tray};
 
 /// Passed by the login item, so a login start stays in the menu bar.
 const AUTOSTART_ARG: &str = "--autostart";
-const SETTINGS: &str = "settings";
+pub const SETTINGS: &str = "settings";
 const SETTINGS_ITEM: &str = "settings-window";
+const QUIT_ITEM: &str = "quit";
+const ISSUES_URL: &str = "https://github.com/msadiks/annex-app/issues/new/choose";
 
 struct AppState {
     engine: EngineHandle,
-    /// Wakes the menu bar menu after one of its settings was clicked.
-    menu_poke: Sender<()>,
 }
 
 #[derive(Serialize)]
@@ -66,6 +69,7 @@ struct StreamView {
 #[derive(Serialize)]
 struct View {
     state: &'static str,
+    paired_id: Option<String>,
     paired_name: Option<String>,
     receiver_gpu: Option<String>,
     receiver_hevc_ok: bool,
@@ -80,6 +84,14 @@ struct View {
     screen_recording: bool,
     autostart: bool,
     version: &'static str,
+    /// Seconds left before the displays kept for a lost PC are unplugged.
+    grace_secs: Option<u64>,
+    kept_displays: usize,
+    /// The PC's IP address and ports while connected.
+    address: Option<String>,
+    ports: Option<String>,
+    mac_name: String,
+    log_path: String,
 }
 
 fn mode_str(m: VideoMode) -> &'static str {
@@ -109,6 +121,7 @@ fn status(app: AppHandle, state: State<AppState>) -> View {
     };
     View {
         state: state_str(s.state),
+        paired_id: s.paired_id,
         paired_name: s.paired_name,
         receiver_gpu: s.receiver_gpu,
         receiver_hevc_ok: s.receiver_hevc_ok,
@@ -166,6 +179,15 @@ fn status(app: AppHandle, state: State<AppState>) -> View {
         screen_recording: annex_mac::has_screen_recording(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         version: env!("CARGO_PKG_VERSION"),
+        grace_secs: s.grace_until.map(|t| t.saturating_duration_since(Instant::now()).as_secs_f32().ceil() as u64),
+        kept_displays: s.streams.len(),
+        address: s.peer_addr.map(|a| a.ip().to_string()),
+        ports: s.peer_addr.map(|a| match s.video_addr {
+            Some(v) => format!("TCP {} · UDP {}", a.port(), v.port()),
+            None => format!("TCP {}", a.port()),
+        }),
+        mac_name: annex_mac::host_name(),
+        log_path: annex_mac::log_dir().join("annex.log").display().to_string(),
     }
 }
 
@@ -191,7 +213,6 @@ fn set_monitor(
     let mode = mode.map(|m| tray::mode_pref(&m));
     let source = source.map(|s| if s == "extend" { SourcePref::Extend } else { SourcePref::Mirror { display_uuid: s } });
     state.engine.set_monitor_prefs(id, enabled, mode, source);
-    let _ = state.menu_poke.try_send(());
     Ok(())
 }
 
@@ -199,7 +220,6 @@ fn set_monitor(
 fn set_mirror_match(state: State<AppState>, id: String, on: bool) -> Result<(), String> {
     let id: u64 = id.parse().map_err(|_| "bad monitor id".to_string())?;
     state.engine.set_mirror_match(id, on);
-    let _ = state.menu_poke.try_send(());
     Ok(())
 }
 
@@ -226,18 +246,80 @@ fn open_screen_recording_settings() {
         .spawn();
 }
 
-/// Opens the settings window in front of everything. While it is open Annex
-/// is a regular app, with a Dock icon and a place in Cmd+Tab.
-fn show_settings(app: &AppHandle) {
+fn open_url(url: &str) {
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
+#[tauri::command]
+fn open_displays_settings() {
+    open_url("x-apple.systempreferences:com.apple.Displays-Settings.extension");
+}
+
+#[tauri::command]
+fn reveal_log() {
+    let log = annex_mac::log_dir().join("annex.log");
+    let _ = std::process::Command::new("open").arg("-R").arg(log).spawn();
+}
+
+#[tauri::command]
+fn report_problem() {
+    open_url(ISSUES_URL);
+}
+
+/// Opens the window from the popover, on `page` when given.
+#[tauri::command]
+fn open_annex(app: AppHandle, page: Option<String>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        popover::hide(&handle, true);
+        show_settings(&handle, page.as_deref());
+    });
+}
+
+#[tauri::command]
+fn popover_size(app: AppHandle, height: f64) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || popover::set_height(&handle, height));
+}
+
+#[tauri::command]
+fn popover_hide(app: AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || popover::hide(&handle, false));
+}
+
+#[tauri::command]
+fn quit(app: AppHandle, state: State<AppState>) {
+    state.engine.shutdown();
+    app.exit(0);
+}
+
+/// Opens the settings window in front of everything, on `page` when given.
+/// While it is open Annex is a regular app, with a Dock icon and a place in
+/// Cmd+Tab.
+fn show_settings(app: &AppHandle, page: Option<&str>) {
     let _ = app.set_activation_policy(ActivationPolicy::Regular);
     let window = match app.get_webview_window(SETTINGS) {
-        Some(w) => w,
-        None => match WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("index.html".into()))
-            .title("Annex")
-            .inner_size(560.0, 720.0)
-            .min_inner_size(480.0, 520.0)
-            .resizable(true)
-            .build()
+        Some(w) => {
+            if let Some(p) = page {
+                let _ = w.eval(format!("window.annexGo && annexGo({})", serde_json::to_string(p).unwrap_or_default()));
+            }
+            w
+        }
+        None => match WebviewWindowBuilder::new(
+            app,
+            SETTINGS,
+            WebviewUrl::App(page.map_or("index.html".into(), |p| format!("index.html?page={p}")).into()),
+        )
+        .title("Annex")
+        .inner_size(1100.0, 760.0)
+        .min_inner_size(860.0, 600.0)
+        .resizable(true)
+        .theme(Some(Theme::Dark))
+        .background_color(Color(10, 10, 10, 255))
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .build()
         {
             Ok(w) => w,
             Err(e) => {
@@ -288,7 +370,7 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::hide_others(app, None)?,
             &PredefinedMenuItem::show_all(app, None)?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, tray::QUIT, "Quit Annex", true, Some("CmdOrCtrl+Q"))?,
+            &MenuItem::with_id(app, QUIT_ITEM, "Quit Annex", true, Some("CmdOrCtrl+Q"))?,
         ],
     )?;
     // Edit makes copy and paste work in the PIN field.
@@ -316,27 +398,15 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 fn on_menu(app: &AppHandle, e: MenuEvent) {
-    let Some(state) = app.try_state::<AppState>() else { return };
-    let engine = &state.engine;
     match e.id.as_ref() {
-        tray::OPEN | SETTINGS_ITEM => show_settings(app),
-        tray::QUIT => {
-            engine.shutdown();
+        SETTINGS_ITEM => show_settings(app, None),
+        QUIT_ITEM => {
+            if let Some(state) = app.try_state::<AppState>() {
+                state.engine.shutdown();
+            }
             app.exit(0);
         }
-        id => {
-            let Some(action) = tray::action(id) else { return };
-            match action {
-                tray::Action::ToggleEnabled(m) => {
-                    let on = engine.status().monitors.iter().find(|x| x.id == m).is_some_and(|x| !x.enabled);
-                    engine.set_monitor_prefs(m, Some(on), None, None);
-                }
-                tray::Action::Mode(m, mode) => engine.set_monitor_prefs(m, None, Some(mode), None),
-                tray::Action::Source(m, source) => engine.set_monitor_prefs(m, None, None, Some(source)),
-                tray::Action::MirrorMatch(m, on) => engine.set_mirror_match(m, on),
-            }
-            let _ = state.menu_poke.try_send(());
-        }
+        _ => {}
     }
 }
 
@@ -390,11 +460,14 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])))
         .menu(app_menu)
         .on_menu_event(on_menu)
-        .on_window_event(|window, e| {
+        .on_window_event(|window, e| match (window.label(), e) {
             // Back to a menu bar app once the window is gone.
-            if window.label() == SETTINGS && matches!(e, WindowEvent::Destroyed) {
+            (SETTINGS, WindowEvent::Destroyed) => {
                 let _ = window.app_handle().set_activation_policy(ActivationPolicy::Accessory);
             }
+            // Like a menu, the popover goes away when you click elsewhere.
+            (popover::LABEL, WindowEvent::Focused(false)) => popover::hide(window.app_handle(), true),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             status,
@@ -405,7 +478,14 @@ pub fn run() {
             set_client_cursor,
             set_autostart,
             request_screen_recording,
-            open_screen_recording_settings
+            open_screen_recording_settings,
+            open_displays_settings,
+            reveal_log,
+            report_problem,
+            open_annex,
+            popover_size,
+            popover_hide,
+            quit
         ])
         .setup(move |app| {
             app.set_activation_policy(ActivationPolicy::Accessory);
@@ -419,25 +499,26 @@ pub fn run() {
             }
             let backend = annex_mac::MacBackend::new()?;
             let engine = Engine::start(backend, EngineOptions::new(annex_mac::config_path(), annex_mac::host_name()))?;
-            let (menu_poke, poke_rx) = crossbeam_channel::bounded(1);
-            app.manage(AppState { engine: engine.clone(), menu_poke });
+            app.manage(AppState { engine: engine.clone() });
 
-            let tray = TrayIconBuilder::with_id("annex")
-                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+            popover::create(app.handle())?;
+            let tray = TrayIconBuilder::with_id(tray::ID)
+                .icon(tray::initial_icon()?)
                 .icon_as_template(true)
                 .tooltip("Annex")
-                .menu(&Menu::with_items(app, &[&MenuItem::new(app, "Starting…", false, None::<&str>)?])?)
-                .show_menu_on_left_click(true)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, e| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left | MouseButton::Right, button_state: MouseButtonState::Up, .. } = e {
+                        popover::toggle(tray.app_handle());
+                    }
+                })
                 .build(app)?;
-            let handle = app.handle().clone();
-            std::thread::Builder::new()
-                .name("annex-menu".into())
-                .spawn(move || tray::run(handle, tray, engine.clone(), poke_rx))?;
+            std::thread::Builder::new().name("annex-tray".into()).spawn(move || tray::run(tray, engine))?;
 
             // Opened by hand: show the window. At login only when Annex needs the user.
             let needs_user = app.state::<AppState>().engine.status().paired_id.is_none() || !annex_mac::has_screen_recording();
             if !at_login || needs_user {
-                show_settings(app.handle());
+                show_settings(app.handle(), None);
             }
             Ok(())
         })
@@ -447,7 +528,7 @@ pub fn run() {
             // Closing the settings window keeps the app in the menu bar.
             tauri::RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
             // Opening Annex again (Finder, Spotlight, Launchpad) shows the window.
-            tauri::RunEvent::Reopen { .. } => show_settings(app),
+            tauri::RunEvent::Reopen { .. } => show_settings(app, None),
             tauri::RunEvent::Exit => {
                 if let Some(s) = app.try_state::<AppState>() {
                     s.engine.shutdown();
