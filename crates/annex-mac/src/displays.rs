@@ -126,9 +126,7 @@ impl Mirrored {
     }
 
     /// Waits until the mirroring has held for a moment, restoring it while
-    /// macOS is still rearranging the displays. A capture of the virtual
-    /// display started before then can keep showing it as an empty extended
-    /// desktop instead of the Mac display's picture.
+    /// macOS is still rearranging the displays.
     pub fn settle(&self) -> anyhow::Result<()> {
         let until = Instant::now() + Duration::from_secs(4);
         let mut held_since = Instant::now();

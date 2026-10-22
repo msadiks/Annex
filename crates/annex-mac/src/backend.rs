@@ -294,8 +294,7 @@ impl MacBackend {
 
     /// Waits for macOS to finish rearranging displays after a virtual display
     /// came or went, keeps matched Mac displays mirroring theirs, and captures
-    /// those afresh: a capture running across the change can keep showing a
-    /// matched virtual display as an empty extended desktop.
+    /// those afresh.
     fn resettle_matches(&mut self) {
         let matches: Vec<Mirrored> = self.streams.values().filter_map(|s| s.mirrored).collect();
         let shows_cursor = !self.client_cursor;
@@ -310,6 +309,34 @@ impl MacBackend {
                 }
             }
         }
+    }
+
+    /// Makes the extended virtual displays again, after a matched one. When a
+    /// Mac display mirrors a virtual display made after an extended one,
+    /// macOS gives every live capture of it the extended display's picture;
+    /// made in the other order, both are captured right.
+    fn recreate_extended(&mut self) {
+        let shows_cursor = !self.client_cursor;
+        let ids: Vec<u8> =
+            self.streams.iter().filter(|(_, s)| s.mirrored.is_none() && s.vdisplay.is_some()).map(|(id, _)| *id).collect();
+        for id in ids {
+            let Some(mut s) = self.streams.remove(&id) else { continue };
+            s.capture.take();
+            if let Some(vd) = s.vdisplay.take() {
+                self.retired.insert(identity(&s.req), vd.id);
+            }
+            let made = self.new_vdisplay(&s.req, format!("Annex: {}", s.req.monitor_name)).and_then(|vd| {
+                let target = vd.id;
+                s.vdisplay = Some(vd);
+                s.recapture(target, shows_cursor)
+            });
+            if let Err(e) = made {
+                tracing::warn!(stream = id, "could not make the extended display again: {e:#}");
+            }
+            self.streams.insert(id, s);
+        }
+        self.update_cursor();
+        self.resettle_matches();
     }
 }
 
@@ -389,6 +416,9 @@ impl Backend for MacBackend {
         self.update_cursor();
         if matched && let Some(uuid) = mirrored_uuid(req) {
             self.recapture_mirrors_of(&uuid);
+        }
+        if matched {
+            self.recreate_extended();
         }
         if extended {
             self.resettle_matches();
