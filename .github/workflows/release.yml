@@ -1,10 +1,11 @@
 name: Release
 
 # Push a tag like v1.0.0, or run this workflow by hand with a tag name, to
-# build the Windows installer and portable zip into a draft release (a new tag is created on the built
-# commit when the draft is published). The Mac .dmg is signed and notarized on
-# a Mac with tools/mac/release.sh and added to the same draft, so no Apple
-# credentials live in GitHub.
+# build the Windows installer and portable zip and a signed, notarized
+# Annex-mac-arm64.dmg into a draft release (a new tag is created on the built
+# commit when the draft is published). The Mac job runs in the protected
+# "release" environment, so it waits for a maintainer's approval before it can
+# read the Apple signing secrets. Setup is in docs/releasing.md.
 on:
   push:
     tags: ["v*"]
@@ -15,7 +16,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -50,9 +51,79 @@ jobs:
             dist/Annex-windows-x64-portable.zip
           if-no-files-found: error
 
+  mac:
+    runs-on: macos-latest
+    environment: release
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Install signing credentials
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          set -euo pipefail
+          : "${CERTIFICATE:?The APPLE_CERTIFICATE secret is missing; see docs/releasing.md}"
+          if [ -z "$NOTARY_KEY" ] && [ -z "$NOTARY_APPLE_ID" ]; then
+            echo "::error::Add APPLE_API_KEY_P8 (or APPLE_ID) to the release environment; see docs/releasing.md"
+            exit 1
+          fi
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/annex-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Developer ID intermediates, in case the runner image lacks them.
+          for ca in DeveloperIDG2CA DeveloperIDCA; do
+            curl -fsSL "https://www.apple.com/certificateauthority/$ca.cer" -o "$RUNNER_TEMP/$ca.cer" \
+              && security import "$RUNNER_TEMP/$ca.cer" -k "$KEYCHAIN" \
+              || echo "::warning::Could not add the $ca intermediate"
+          done
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/annex.p12"
+          security import "$RUNNER_TEMP/annex.p12" -k "$KEYCHAIN" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -t cert -A
+          rm "$RUNNER_TEMP/annex.p12"
+          # Let codesign use the key without a GUI prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Search the new keychain first, keeping the existing ones.
+          security list-keychains -d user | xargs security list-keychains -d user -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          if [ -n "$NOTARY_KEY" ]; then
+            printf '%s\n' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
+          fi
+      - name: Build, sign, notarize and staple
+        env:
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -f "$RUNNER_TEMP/notary.p8" ]; then export NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8"; fi
+          tools/mac/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: dist/Annex-mac-arm64.dmg
+          if-no-files-found: error
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/annex-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"
+
+  # Still drafts the release with the Windows files if the Mac job fails or is
+  # rejected, so the .dmg can be built by hand and added (docs/releasing.md).
   publish:
-    needs: [windows]
+    needs: [windows, mac]
+    if: ${{ !cancelled() && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -65,3 +136,4 @@ jobs:
           files: |
             Annex-windows-x64-setup.exe
             Annex-windows-x64-portable.zip
+            Annex-mac-arm64.dmg

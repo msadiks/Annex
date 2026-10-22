@@ -62,8 +62,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p annex-mac -p annex-mac-app
+      - run: cargo build --release -p annex-mac
+      - name: Build the app into an unsigned .dmg
+        working-directory: apps/annex-mac-app
+        env:
+          # Lay out the .dmg window as a release does; Tauri skips that on CI.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+        run: npx --yes @tauri-apps/cli@2 build --bundles dmg
       - uses: actions/upload-artifact@v4
         with:
           name: annex-mac-cli
           path: target/release/annex-mac-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: annex-mac-unsigned-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
