@@ -11,7 +11,7 @@ use objc2_core_graphics::{
     CGBeginDisplayConfiguration, CGCancelDisplayConfiguration, CGCompleteDisplayConfiguration,
     CGConfigureDisplayMirrorOfDisplay, CGConfigureDisplayOrigin, CGConfigureOption, CGDisplayBounds, CGDisplayConfigRef,
     CGDisplayIsActive, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMirrorsDisplay, CGDisplayModelNumber,
-    CGDisplayVendorNumber, CGError, CGGetActiveDisplayList, CGGetOnlineDisplayList, CGMainDisplayID,
+    CGDisplayUnitNumber, CGDisplayVendorNumber, CGError, CGGetActiveDisplayList, CGGetOnlineDisplayList, CGMainDisplayID,
 };
 
 #[link(name = "ColorSync", kind = "framework")]
@@ -36,13 +36,19 @@ pub fn active_ids() -> Vec<u32> {
 }
 
 /// Like [`active_ids`], but also displays that only mirror another one.
-fn online_ids() -> Vec<u32> {
+pub fn online_ids() -> Vec<u32> {
     let mut ids = [0u32; 32];
     let mut n = 0u32;
     unsafe {
         CGGetOnlineDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut n);
     }
     ids[..n as usize].to_vec()
+}
+
+/// Whether another online display has display `id`'s unit number.
+pub fn shares_unit(id: u32) -> bool {
+    let unit = CGDisplayUnitNumber(id);
+    online_ids().into_iter().any(|o| o != id && CGDisplayUnitNumber(o) == unit)
 }
 
 /// The Annex mirror display that Mac display `id` mirrors, while it is
