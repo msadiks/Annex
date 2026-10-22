@@ -32,8 +32,8 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
-      - name: Install mingw-w64
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm
+      - name: Install mingw-w64 and NSIS
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm nsis zip
       - name: Cache FFmpeg
         id: ffmpeg
         uses: actions/cache@v4
@@ -44,12 +44,16 @@ jobs:
         if: steps.ffmpeg.outputs.cache-hit != 'true'
         run: tools/ffmpeg/build-mingw.sh
       - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win -p annex-testsrc
+      - name: Package the installer and portable zip
+        run: tools/windows/package.sh
       - uses: actions/upload-artifact@v4
         with:
           name: annex-windows
           path: |
-            target/x86_64-pc-windows-gnu/release/annex.exe
+            dist/Annex-windows-x64-setup.exe
+            dist/Annex-windows-x64-portable.zip
             target/x86_64-pc-windows-gnu/release/annex-testsrc.exe
+          if-no-files-found: error
 
   mac:
     name: Mac sender and app

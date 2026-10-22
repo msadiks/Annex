@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag like v1.0.0, or run this workflow by hand with a tag name, to
-# build Annex.exe into a draft release (a new tag is created on the built
+# build the Windows installer and portable zip into a draft release (a new tag is created on the built
 # commit when the draft is published). The Mac .dmg is signed and notarized on
 # a Mac with tools/mac/release.sh and added to the same draft, so no Apple
 # credentials live in GitHub.
@@ -28,8 +28,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
-      - name: Install mingw-w64
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm
+      - name: Install mingw-w64 and NSIS
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 nasm nsis zip
       - name: Cache FFmpeg
         id: ffmpeg
         uses: actions/cache@v4
@@ -40,11 +40,15 @@ jobs:
         if: steps.ffmpeg.outputs.cache-hit != 'true'
         run: tools/ffmpeg/build-mingw.sh
       - run: cargo build --release --target x86_64-pc-windows-gnu -p annex-win
-      - run: cp target/x86_64-pc-windows-gnu/release/annex.exe Annex.exe
+      - name: Package the installer and portable zip
+        run: tools/windows/package.sh
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: Annex.exe
+          path: |
+            dist/Annex-windows-x64-setup.exe
+            dist/Annex-windows-x64-portable.zip
+          if-no-files-found: error
 
   publish:
     needs: [windows]
@@ -58,4 +62,6 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           draft: true
-          files: Annex.exe
+          files: |
+            Annex-windows-x64-setup.exe
+            Annex-windows-x64-portable.zip

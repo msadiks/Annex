@@ -38,6 +38,13 @@ struct Board {
     sender: Option<SenderStreamStats>,
 }
 
+pub struct LiveStats {
+    pub fps: f32,
+    pub mbps: f64,
+    pub loss_percent: f64,
+    pub latency_ms: Option<f64>,
+}
+
 pub struct Pairing {
     pub pin: String,
     pub until: Instant,
@@ -177,6 +184,18 @@ impl Shared {
             let id = s.stream_id;
             b.entry(id).or_default().sender = Some(s);
         }
+    }
+
+    /// The numbers the Annex window shows for a stream.
+    pub fn live_stats(&self, stream_id: u8) -> Option<LiveStats> {
+        let b = self.board.lock().unwrap();
+        let e = b.get(&stream_id)?;
+        Some(LiveStats {
+            fps: e.fps,
+            mbps: e.net.bytes as f64 * 8.0 / 1e6,
+            loss_percent: e.net.loss_ratio() * 100.0,
+            latency_ms: e.e2e_ms,
+        })
     }
 
     pub fn forget_stream(&self, stream_id: u8) {

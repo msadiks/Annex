@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Draws the Annex icon and writes every size both apps need. Needs Pillow."""
+"""Draws the Annex icon and writes every size both apps need, plus the
+Windows installer's wizard images. Needs Pillow."""
 import os
 from PIL import Image, ImageDraw
 
@@ -41,8 +42,37 @@ def template(size):
     return img
 
 
+def installer_art(m):
+    """NSIS wizard images at 2x (MUI2 scales them to the page)."""
+    out = os.path.join(ROOT, "tools", "windows")
+    os.makedirs(out, exist_ok=True)
+    # Welcome/finish side panel: 164x314 at 1x.
+    w, h = 328, 628
+    side = Image.new("RGB", (w, h))
+    g = ImageDraw.Draw(side)
+    for y in range(h):
+        t = y / h
+        g.line([(0, y), (w, y)], fill=(int(30 + 14 * t), int(104 - 46 * t), int(236 - 64 * t)))
+    # Faint outlines of the two displays, large, as a backdrop.
+    ov = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    o = ImageDraw.Draw(ov)
+    o.rounded_rectangle([-60, 330, 250, 530], radius=24, outline=(255, 255, 255, 34), width=10)
+    o.rounded_rectangle([90, 420, 420, 640], radius=24, outline=(255, 255, 255, 26), width=10)
+    side = Image.alpha_composite(side.convert("RGBA"), ov)
+    icon = m.resize((200, 200), Image.LANCZOS)
+    side.alpha_composite(icon, ((w - 200) // 2, 92))
+    side.convert("RGB").save(os.path.join(out, "wizard.bmp"))
+    # Inner page header, right-aligned: 150x57 at 1x, on the page's white.
+    hw, hh = 300, 114
+    head = Image.new("RGBA", (hw, hh), (255, 255, 255, 255))
+    small = m.resize((92, 92), Image.LANCZOS)
+    head.alpha_composite(small, (hw - 92 - 14, (hh - 92) // 2))
+    head.convert("RGB").save(os.path.join(out, "header.bmp"))
+
+
 def main():
     m = master()
+    installer_art(m)
     os.makedirs(os.path.join(ROOT, "assets"), exist_ok=True)
     m.save(os.path.join(ROOT, "assets", "icon-1024.png"))
     m.save(os.path.join(ROOT, "crates", "annex-win", "resources", "annex.ico"),
