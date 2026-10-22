@@ -1,6 +1,7 @@
 //! ScreenCaptureKit display capture (spec 6.2).
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
@@ -30,6 +31,7 @@ pub struct OutputIvars {
     on_frame: FrameFn,
     display_id: u32,
     rate: Mutex<Rate>,
+    stopped: AtomicBool,
 }
 
 /// What ScreenCaptureKit delivers, logged every 10 s while the display is
@@ -96,14 +98,20 @@ define_class!(
     unsafe impl SCStreamDelegate for CaptureOutput {
         #[unsafe(method(stream:didStopWithError:))]
         fn did_stop(&self, _stream: &SCStream, error: &NSError) {
-            tracing::warn!("screen capture stopped: {}", error.localizedDescription());
+            tracing::warn!(display_id = self.ivars().display_id, "screen capture stopped: {}", error.localizedDescription());
+            self.ivars().stopped.store(true, Ordering::Release);
         }
     }
 );
 
 impl CaptureOutput {
     fn new(display_id: u32, on_frame: FrameFn) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(OutputIvars { on_frame, display_id, rate: Mutex::default() });
+        let this = Self::alloc().set_ivars(OutputIvars {
+            on_frame,
+            display_id,
+            rate: Mutex::default(),
+            stopped: AtomicBool::new(false),
+        });
         unsafe { msg_send![super(this), init] }
     }
 
@@ -164,7 +172,7 @@ fn find_display(display_id: u32) -> anyhow::Result<Retained<SCDisplay>> {
 pub struct Capture {
     stream: Retained<SCStream>,
     cfg: Retained<SCStreamConfiguration>,
-    _output: Retained<CaptureOutput>,
+    output: Retained<CaptureOutput>,
     _queue: DispatchRetained<DispatchQueue>,
 }
 
@@ -220,12 +228,18 @@ impl Capture {
                 Some(e) => bail!("screen capture failed to start: {e}"),
             }
             tracing::info!(display_id, width, height, "capture started");
-            Ok(Capture { stream, cfg, _output: output, _queue: queue })
+            Ok(Capture { stream, cfg, output, _queue: queue })
         }
     }
 }
 
 impl Capture {
+    /// Whether ScreenCaptureKit stopped the capture with an error (the
+    /// display went away for a moment while macOS rearranged displays).
+    pub fn stopped(&self) -> bool {
+        self.output.ivars().stopped.load(Ordering::Acquire)
+    }
+
     /// Cursor in the video (off while the PC draws it, spec phase 3).
     pub fn set_shows_cursor(&self, on: bool) {
         unsafe {

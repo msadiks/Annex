@@ -87,6 +87,7 @@ impl Mirrored {
             width: b.size.width as i32,
         };
         m.apply()?;
+        m.settle()?;
         Ok(m)
     }
 
@@ -121,6 +122,26 @@ impl Mirrored {
             Ok(())
         })?;
         tracing::info!(display = self.display, master = self.master, main = CGMainDisplayID(), "display mirroring changed");
+        Ok(())
+    }
+
+    /// Waits until the mirroring has held for a moment, restoring it while
+    /// macOS is still rearranging the displays. A capture of the virtual
+    /// display started before then can keep showing it as an empty extended
+    /// desktop instead of the Mac display's picture.
+    pub fn settle(&self) -> anyhow::Result<()> {
+        let until = Instant::now() + Duration::from_secs(4);
+        let mut held_since = Instant::now();
+        while Instant::now() < until {
+            if !self.holds() {
+                tracing::info!(display = self.display, master = self.master, "macOS changed the display mirroring; restoring it");
+                self.apply()?;
+                held_since = Instant::now();
+            } else if held_since.elapsed() >= Duration::from_millis(800) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
         Ok(())
     }
 
