@@ -83,9 +83,7 @@ network. Turn on *Start at login* on both sides to make it permanent.
   different shapes leave black bars on the PC. Set the monitor's *Mirror
   shape* to *Match the PC monitor* on the Mac, and while it mirrors, the Mac
   takes the monitor's shape instead: the PC is filled, and the Mac's own
-  screen gets the bars. Match is the one to pick when the PC monitor is your
-  main screen and you hardly look at the Mac's own. It is also sharper,
-  because the PC gets the picture pixel for pixel instead of scaled.
+  screen gets the bars.
 - If the network drops, the Mac keeps the display for 30 seconds so your
   windows don't move. After that it's unplugged until the PC is back.
 
