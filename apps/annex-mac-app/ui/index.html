@@ -7,52 +7,370 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1>Annex</h1>
-    <span id="state" class="pill">…</span>
-  </header>
-
-  <section id="perm" class="banner" hidden>
-    <p><strong>Screen Recording permission is needed.</strong> Annex captures the displays it streams to your PC.
-      Allow Annex in System Settings, then quit and reopen Annex.</p>
-    <button id="perm-open">Open System Settings</button>
-  </section>
-
-  <section id="pairing" hidden>
-    <h2>Pair with your PC</h2>
-    <p class="hint">On the PC, open the Annex tray menu and choose <em>Pair with a Mac…</em>. Then enter the PIN it shows.</p>
-    <div id="found"></div>
-    <form id="pair-form">
-      <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123 456" aria-label="PIN">
-      <button type="submit">Pair</button>
-    </form>
-    <p id="pair-result" class="hint"></p>
-  </section>
-
-  <section id="displays" hidden>
-    <h2>PC monitors</h2>
-    <p class="hint">Turn a monitor on to plug it in as a Mac display.</p>
-    <div id="monitors"></div>
-  </section>
-
-  <section id="options">
-    <h2>Options</h2>
-    <label class="row"><input type="checkbox" id="cursor"> Draw the pointer on the PC (feels more immediate)</label>
-    <label class="row"><input type="checkbox" id="autostart"> Start Annex at login</label>
-  </section>
-
-  <footer>
-    <p id="message" class="hint"></p>
-    <p id="peer" class="hint"></p>
-    <div id="forget-box" hidden>
-      <button id="forget" class="link">Forget this PC</button>
-      <span id="forget-confirm" hidden>Forget <strong id="forget-name"></strong>? You'll need to pair again.
-        <button id="forget-yes" class="danger">Forget</button>
-        <button id="forget-no" class="link">Cancel</button></span>
+<div id="shell" hidden>
+  <aside class="side">
+    <div class="side-drag" data-tauri-drag-region></div>
+    <div class="brand">
+      <svg width="32" height="32" viewBox="0 0 1024 1024" aria-hidden="true">
+        <rect width="1024" height="1024" rx="230" fill="#F2F2F2"/>
+        <rect x="170" y="230" width="470" height="310" rx="34" fill="none" stroke="#9A9A9A" stroke-width="36"/>
+        <rect x="400" y="420" width="440" height="280" rx="30" fill="#2A2A2A" stroke="#0A0A0A" stroke-width="40"/>
+        <path d="M620 700 V 800 M 520 810 H 720" fill="none" stroke="#0A0A0A" stroke-width="40" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="brand-name">Annex</div>
+        <div class="tiny faint" id="brand-ver"></div>
+      </div>
     </div>
-    <button id="repair" class="link" hidden>Pair with a different PC</button>
-    <p id="version" class="hint"></p>
-  </footer>
-  <script src="app.js"></script>
+    <nav class="nav" aria-label="Sections">
+      <span class="nav-hl" id="nav-hl" aria-hidden="true"></span>
+      <button data-page="displays">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z M9 20h6 M12 16v4"/></svg>
+        <span class="label">Displays</span><span class="badge" id="badge-on" hidden></span>
+      </button>
+      <button data-page="connection">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15 15 0 0 1 20 0 M5 12.4a10 10 0 0 1 14 0 M8.5 16a5 5 0 0 1 7 0 M12 19.5h.01"/></svg>
+        <span class="label">Connection</span>
+      </button>
+      <button data-page="prefs">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9 M17 7h3 M15 5v4 M4 17h3 M11 17h9 M9 15v4"/></svg>
+        <span class="label">Preferences</span>
+      </button>
+    </nav>
+    <div class="side-pc" id="side-pc">
+      <div class="side-pc-head">
+        <span class="dot" id="side-dot"><i></i><i></i></span>
+        <div class="grow">
+          <div class="name" id="side-name"></div>
+          <div class="tiny faint" id="side-line"></div>
+        </div>
+      </div>
+      <div class="bars" id="side-bars" aria-hidden="true"></div>
+      <div class="side-totals mono"><span><span id="side-mbps">—</span> Mbps</span><span>≈ <span id="side-ms">—</span> ms</span></div>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <header class="head" data-tauri-drag-region>
+      <div class="head-text" data-tauri-drag-region>
+        <h1 id="title" data-tauri-drag-region></h1>
+        <p id="subtitle" data-tauri-drag-region></p>
+      </div>
+      <div class="pill" role="status">
+        <span class="dot" id="pill-dot"><i></i><i></i></span>
+        <span id="pill-text"></span>
+        <span class="mono tiny faint" id="pill-ms"></span>
+      </div>
+    </header>
+
+    <div class="banner" id="perm" hidden>
+      <p><strong>Screen Recording permission is needed.</strong> Annex captures the displays it streams to your PC.
+        Allow Annex in System Settings, then quit and reopen Annex.</p>
+      <button class="ghost" id="perm-open">Open System Settings</button>
+    </div>
+    <div class="banner" id="message" hidden><p id="message-text"></p></div>
+
+    <!-- Displays -->
+    <div class="page" id="page-displays" hidden>
+      <section class="card arrange rise" aria-labelledby="arr-h">
+        <div class="grid-bg" aria-hidden="true"></div>
+        <div class="arrange-top">
+          <h2 class="eyebrow" id="arr-h">Arrangement</h2>
+          <div class="legend">
+            <span><svg width="22" height="6" viewBox="0 0 22 6" aria-hidden="true"><path d="M3 3 H 21" stroke="#F5F5F5" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 6"/></svg>Sharp</span>
+            <span><svg width="22" height="6" viewBox="0 0 22 6" aria-hidden="true"><path d="M1 3 H 21" stroke="#8C8C8C" stroke-width="2.5" stroke-dasharray="5 4"/></svg>Fast</span>
+            <span><svg width="22" height="6" viewBox="0 0 22 6" aria-hidden="true"><path d="M1 3 H 21" stroke="#4A4A4A" stroke-width="1.5" stroke-dasharray="2 3"/></svg>Off</span>
+          </div>
+        </div>
+        <div class="diagram-wrap">
+          <div class="diagram" id="diagram">
+            <svg viewBox="0 0 1000 330" aria-hidden="true">
+              <g id="beams-base"></g>
+              <g id="beams-line"></g>
+              <g id="beams-flow"></g>
+              <rect x="50" y="86" width="240" height="154" rx="11" fill="#161616" stroke="rgba(255,255,255,0.16)" stroke-width="1.5"/>
+              <rect x="58" y="94" width="224" height="138" rx="5" fill="#111111"/>
+              <rect x="58" y="94" width="224" height="9" rx="2" fill="rgba(255,255,255,0.06)"/>
+              <rect x="74" y="114" width="118" height="78" rx="5" fill="#1F1F1F" stroke="rgba(255,255,255,0.08)"/>
+              <rect x="150" y="136" width="114" height="80" rx="5" fill="#292929" stroke="rgba(255,255,255,0.1)"/>
+              <path d="M 26 240 H 314 L 304 252 H 36 Z" fill="#1B1B1B" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+              <g id="ports"></g>
+              <text x="170" y="282" font-size="13" font-weight="600" fill="#EDEDED" text-anchor="middle">This Mac</text>
+              <text x="170" y="300" font-size="11" fill="#8A8A8A" text-anchor="middle" id="mac-sub"></text>
+              <g id="stands"></g>
+              <text x="710" y="44" font-size="13" font-weight="600" fill="#EDEDED" text-anchor="middle" id="pc-label"></text>
+              <text x="710" y="62" font-size="11" fill="#8A8A8A" text-anchor="middle" id="pc-sub"></text>
+            </svg>
+            <div id="tiles"></div>
+            <div class="arrange-empty" id="arrange-empty" hidden>
+              <div class="ghost-mon" aria-hidden="true"></div>
+              <span id="arrange-empty-text"></span>
+            </div>
+          </div>
+        </div>
+        <div class="arrange-foot">
+          <span>Select a monitor to change how it streams. Arrange displays in System Settings › Displays.</span>
+          <button class="ghost" id="open-displays">Open Displays Settings</button>
+        </div>
+      </section>
+
+      <div class="mon-cards" id="mon-cards" hidden>
+        <section class="card rise" id="set-card" aria-labelledby="set-name">
+          <div class="card-head">
+            <div class="glyph-box" id="set-glyph-box" aria-hidden="true"><span class="glyph" id="set-glyph"></span></div>
+            <div class="grow">
+              <h2 id="set-name"></h2>
+              <div class="small muted mono" id="set-meta"></div>
+            </div>
+            <button class="switch" role="switch" aria-checked="false" aria-label="Use as a Mac display" id="set-switch"><span class="track"><span class="knob"></span></span></button>
+          </div>
+          <div class="fields">
+            <div class="field">
+              <div class="field-head">
+                <span class="label" id="pic-l">Picture</span>
+                <span class="tiny mono" id="eff-label"></span>
+              </div>
+              <div class="seg" role="group" aria-labelledby="pic-l" id="seg-mode" style="--n: 3">
+                <span class="hl" aria-hidden="true"></span>
+                <button data-v="auto">Automatic</button><button data-v="sharp">Sharp</button><button data-v="fast">Fast</button>
+              </div>
+              <p class="help" id="mode-help"></p>
+            </div>
+            <div class="field">
+              <span class="label" id="src-l">Shows</span>
+              <div class="seg" role="group" aria-labelledby="src-l" id="seg-src" style="--n: 2">
+                <span class="hl" aria-hidden="true"></span>
+                <button data-v="extend">New display</button><button data-v="mirror">Mirror</button>
+              </div>
+              <div class="sub-field expand" id="mirror-pick" hidden>
+                <label for="mirror-src">Mirror this Mac display</label>
+                <select id="mirror-src"></select>
+              </div>
+            </div>
+            <div class="field expand" id="shape-field" hidden>
+              <span class="label" id="shape-l">Mirror shape</span>
+              <div class="seg" role="group" aria-labelledby="shape-l" id="seg-shape" style="--n: 2">
+                <span class="hl" aria-hidden="true"></span>
+                <button data-v="fit">Fit</button><button data-v="match">Match the PC</button>
+              </div>
+              <div class="shape-dia" aria-hidden="true">
+                <div class="col"><div class="screen" style="width: 112px; height: 70px"><span class="pic" id="dia-mac"></span></div>Mac</div>
+                <svg width="26" height="12" viewBox="0 0 26 12"><path d="M1 6 H 24 M 19 1 L 24 6 L 19 11"/></svg>
+                <div class="col"><div class="screen" id="dia-pc-box"><span class="pic" id="dia-pc"></span></div>PC monitor</div>
+              </div>
+              <p class="help" id="shape-help"></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card rise" id="live-card" aria-labelledby="live-h" style="animation-delay: .07s; overflow: hidden">
+          <div class="card-head">
+            <div class="grow">
+              <h2 id="live-h">Live</h2>
+              <div class="small muted">Updated every second</div>
+            </div>
+            <span class="chip" id="chip"><i aria-hidden="true"></i><span id="chip-text"></span></span>
+          </div>
+          <div id="live-on">
+            <div class="stat-grid" id="stats"></div>
+            <p class="live-warn" id="live-warn" hidden></p>
+          </div>
+          <div class="live-foot mono" id="live-foot"></div>
+          <div class="off-state" id="live-off" hidden>
+            <div class="ghost-mon" aria-hidden="true"></div>
+            <div>
+              <h3>This monitor is off</h3>
+              <p>Turn it on and your Mac sees a new display within a second.</p>
+            </div>
+            <button class="solid" id="turn-on">Turn on</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="page" id="page-connection" hidden>
+      <section class="card rise" aria-labelledby="c-name">
+        <div class="pc-row">
+          <div class="pc-icon" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 24 24"><path d="M3 5h11v9H3z M6 18h5 M8.5 14v4 M17 4h4v16h-4z M19 8h0.01"/></svg>
+          </div>
+          <div style="flex: 1 1 240px; min-width: 0">
+            <h2 id="c-name"></h2>
+            <div class="muted" id="c-gpu"></div>
+          </div>
+          <span class="state-chip"><span class="dot" id="c-dot"><i></i><i></i></span><span id="c-state"></span></span>
+        </div>
+        <dl class="facts">
+          <div><dt>HEVC decoding</dt><dd id="c-hevc"></dd></div>
+          <div><dt>Encryption</dt><dd>On, for everything on the wire</dd></div>
+          <div><dt>Address</dt><dd class="mono selectable" id="c-addr"></dd></div>
+          <div><dt>Ports</dt><dd class="mono" id="c-ports"></dd></div>
+        </dl>
+      </section>
+      <section class="card link-card rise" aria-labelledby="link-h" style="animation-delay: .06s">
+        <div class="link-head">
+          <h2 id="link-h">Link</h2>
+          <div class="link-totals mono">
+            <span><b id="l-mbps">—</b> Mbps</span>
+            <span><b>≈ <span id="l-ms">—</span></b> ms</span>
+            <span><b id="l-loss">—</b> % loss</span>
+          </div>
+        </div>
+        <div class="bars tall" id="link-bars" aria-hidden="true"></div>
+        <div class="small faint">Total bitrate of every monitor that’s on, over the last 28 seconds.</div>
+      </section>
+      <section class="card note rise" style="animation-delay: .12s">
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 7v5l3 2"/></svg>
+        <p>If the network drops, Annex keeps the displays for 30 seconds so your windows don’t move. After that they’re unplugged until the PC is back.</p>
+      </section>
+      <div class="actions rise" style="animation-delay: .16s">
+        <button class="ghost" id="repair">Pair with a different PC</button>
+        <button class="ghost danger" id="forget">Forget this PC</button>
+        <div class="confirm" id="forget-confirm" hidden>
+          <span>Forget <strong id="forget-name"></strong>? You’ll need to pair again.</span>
+          <button class="danger-solid" id="forget-yes">Forget</button>
+          <button class="ghost plain" id="forget-no">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preferences -->
+    <div class="page" id="page-prefs" hidden>
+      <section class="card rows rise" aria-label="Behaviour">
+        <div class="row">
+          <div class="grow">
+            <div class="title" id="cur-l">Draw the pointer on the PC</div>
+            <div class="small muted">Feels more immediate when you move the mouse onto a PC monitor.</div>
+          </div>
+          <button class="switch" role="switch" aria-checked="false" aria-labelledby="cur-l" id="cursor"><span class="track"><span class="knob"></span></span></button>
+        </div>
+        <div class="row">
+          <div class="grow">
+            <div class="title" id="auto-l">Start Annex at login</div>
+            <div class="small muted">Annex reconnects by itself whenever both computers are on the same network.</div>
+          </div>
+          <button class="switch" role="switch" aria-checked="false" aria-labelledby="auto-l" id="autostart"><span class="track"><span class="knob"></span></span></button>
+        </div>
+      </section>
+      <section class="card rows rise" aria-label="Permissions" style="animation-delay: .06s">
+        <div class="row" style="padding-right: 16px">
+          <div style="flex: 1 1 260px; min-width: 0">
+            <div class="title">Screen Recording</div>
+            <div class="small muted">Annex captures the displays it streams to your PC.</div>
+          </div>
+          <span class="allowed" id="sr-chip">
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path id="sr-icon" d="M5 12.5l4.5 4.5L19 7.5"/></svg><span id="sr-text"></span>
+          </span>
+          <button class="ghost" id="sr-open">Open System Settings</button>
+        </div>
+      </section>
+      <section class="card about rise" aria-label="About" style="animation-delay: .12s">
+        <div style="flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <div class="title" style="font-weight: 600" id="about-ver"></div>
+          <div class="small muted">Free and open source, MIT or Apache-2.0. Logs are in <span class="mono selectable" style="color: var(--text-2)" id="log-path"></span></div>
+        </div>
+        <button class="ghost" id="reveal-log">Reveal Log in Finder</button>
+        <button class="textlink" id="report">Report a problem</button>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- Pair with a PC -->
+<div id="pairing" hidden>
+  <div class="pair-bar" data-tauri-drag-region>
+    <span data-tauri-drag-region>Annex</span>
+    <button class="ghost" id="pair-back" hidden>Back</button>
+  </div>
+  <main class="pair-main">
+    <ol class="steps" aria-label="Setup">
+      <li class="step" id="step1">
+        <span class="num"><b>1</b><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span class="ring" aria-hidden="true"></span></span>
+        <span style="display: flex; flex-direction: column; min-width: 0">
+          <span class="st-title">Screen Recording</span>
+          <span class="st-sub" id="step1-sub"></span>
+        </span>
+      </li>
+      <li class="bar" id="bar1" aria-hidden="true"><span></span></li>
+      <li class="step" id="step2">
+        <span class="num"><b>2</b><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span class="ring" aria-hidden="true"></span></span>
+        <span style="display: flex; flex-direction: column; min-width: 0">
+          <span class="st-title">Pair with your PC</span>
+          <span class="st-sub" id="step2-sub"></span>
+        </span>
+      </li>
+      <li class="bar" id="bar2" aria-hidden="true"><span></span></li>
+      <li class="step" id="step3">
+        <span class="num"><b>3</b><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span class="ring" aria-hidden="true"></span></span>
+        <span style="display: flex; flex-direction: column; min-width: 0">
+          <span class="st-title">Turn on a monitor</span>
+          <span class="st-sub">Your Mac sees a new display</span>
+        </span>
+      </li>
+    </ol>
+
+    <div class="pair-grid">
+      <section class="card radar-card" aria-labelledby="scan-h">
+        <div class="top">
+          <h2 class="eyebrow" id="scan-h">On this network</h2>
+          <span class="tiny mono muted" id="found-text"></span>
+        </div>
+        <div class="radar" id="radar" aria-hidden="true">
+          <span class="ring" style="inset: 0"></span>
+          <span class="ring" style="inset: 16.5%; border-color: rgba(255,255,255,0.07)"></span>
+          <span class="ring" style="inset: 33%; border-color: rgba(255,255,255,0.06)"></span>
+          <span class="axis" style="left: 50%; top: 0; bottom: 0; width: 1px"></span>
+          <span class="axis" style="top: 50%; left: 0; right: 0; height: 1px"></span>
+          <span class="sweep"></span>
+          <span class="wave"></span><span class="wave"></span>
+          <svg class="linkline" viewBox="0 0 100 100" id="linkline" hidden><path id="linkline-path" d=""/></svg>
+          <span class="me">
+            <svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1-1z M2 19h20"/></svg>
+          </span>
+          <span class="me-label">This Mac</span>
+          <div id="blips"></div>
+        </div>
+        <p class="scan-text" role="status" id="scan-text"></p>
+      </section>
+
+      <section class="card pair-card" aria-labelledby="pair-h">
+        <div id="pair-form-view">
+          <div>
+            <h2 id="pair-h">Pair with your PC</h2>
+            <p class="lead">On the PC, open the Annex tray menu and choose <strong>Pair with a Mac…</strong> Then type the PIN it shows.</p>
+          </div>
+          <div class="pcs" role="radiogroup" aria-label="PC to pair with" id="pcs" style="margin: 20px 0"></div>
+          <form class="pin-form" id="pin-form">
+            <label for="pin">PIN from the PC</label>
+            <div class="cells" id="cells">
+              <span class="cell" aria-hidden="true"></span><span class="cell" aria-hidden="true"></span><span class="cell" aria-hidden="true"></span>
+              <span class="dash" aria-hidden="true"></span>
+              <span class="cell" aria-hidden="true"></span><span class="cell" aria-hidden="true"></span><span class="cell" aria-hidden="true"></span>
+              <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="7" aria-describedby="pin-msg">
+            </div>
+            <p class="pin-msg" role="status" id="pin-msg"></p>
+            <button type="submit" class="pair-btn" id="pair-btn"><span class="spin" aria-hidden="true"></span><span id="pair-btn-text">Pair</span></button>
+          </form>
+        </div>
+        <div class="paired" id="pair-done-view" hidden>
+          <div class="check" aria-hidden="true">
+            <span class="burst"></span>
+            <svg width="88" height="88" viewBox="0 0 88 88"><circle cx="44" cy="44" r="40"/><path d="M29 45 l10 10 l21 -23"/></svg>
+          </div>
+          <h2 id="paired-title"></h2>
+          <p>From now on both apps reconnect by themselves whenever they’re on the same network.</p>
+          <button class="solid" id="paired-go">Turn on a monitor
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14 M13 6l6 6l-6 6"/></svg>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <p class="pair-foot">Can’t see your PC? Both computers must be on the same network, and Windows Firewall must allow Annex on private networks (TCP 48800, UDP 48801).</p>
+  </main>
+</div>
+<script src="common.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

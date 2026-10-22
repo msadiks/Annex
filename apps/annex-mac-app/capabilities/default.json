@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The settings window",
-  "windows": ["settings"],
-  "permissions": ["core:default"]
+  "description": "The settings window and the menu bar popover",
+  "windows": ["settings", "popover"],
+  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize"]
 }

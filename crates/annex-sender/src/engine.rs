@@ -123,6 +123,12 @@ pub struct Status {
     pub pairing: PairingState,
     /// Last thing worth telling the user.
     pub message: Option<String>,
+    /// While the PC is gone, when its displays are unplugged.
+    #[serde(skip)]
+    pub grace_until: Option<Instant>,
+    /// The PC's control and video addresses while connected.
+    pub peer_addr: Option<SocketAddr>,
+    pub video_addr: Option<SocketAddr>,
 }
 
 impl Default for Status {
@@ -141,6 +147,9 @@ impl Default for Status {
             mirror_match: Vec::new(),
             pairing: PairingState::Idle,
             message: None,
+            grace_until: None,
+            peer_addr: None,
+            video_addr: None,
         }
     }
 }
@@ -419,6 +428,9 @@ impl<B: Backend> Engine<B> {
         st.mac_displays = self.mac_displays.clone();
         st.client_cursor = self.cfg.client_cursor;
         st.mirror_match = self.cfg.mirror_match.iter().filter_map(|id| id.parse().ok()).collect();
+        st.grace_until = self.grace_until.filter(|_| self.session.is_none() && !self.streams.is_empty());
+        st.peer_addr = self.session.as_ref().and_then(|s| s.socket.peer_addr().ok());
+        st.video_addr = self.session.as_ref().map(|s| s.video);
         st.streams = self
             .streams
             .iter()

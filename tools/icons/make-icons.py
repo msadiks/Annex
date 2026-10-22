@@ -29,15 +29,35 @@ def master():
     return img
 
 
-def template(size):
-    """macOS menu bar template: black + alpha."""
+def template(size, state="live"):
+    """macOS menu bar template: black + alpha. `state` is one of off (not
+    paired, dimmed), search (looking for the PC, the PC monitor dashed),
+    idle (connected, the PC monitor outlined) and live (streaming, filled)."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     k = size / 44
-    d.rounded_rectangle([3 * k, 6 * k, 27 * k, 24 * k], radius=3 * k, outline=(0, 0, 0, 140), width=max(1, round(3 * k)))
-    d.rounded_rectangle([14 * k, 14 * k, 41 * k, 33 * k], radius=3 * k, fill=(0, 0, 0, 255))
-    d.rectangle([26 * k, 33 * k, 29 * k, 37 * k], fill=(0, 0, 0, 255))
-    d.rounded_rectangle([21 * k, 37 * k, 34 * k, 40 * k], radius=1 * k, fill=(0, 0, 0, 255))
+    ink = (0, 0, 0, 115 if state == "off" else 255)
+    back = (0, 0, 0, 60 if state == "off" else 140)
+    line = max(1, round(3 * k))
+    d.rounded_rectangle([3 * k, 6 * k, 27 * k, 24 * k], radius=3 * k, outline=back, width=line)
+    front = [14 * k, 14 * k, 41 * k, 33 * k]
+    if state == "live":
+        d.rounded_rectangle(front, radius=3 * k, fill=ink)
+    else:
+        # Clear the back display where the front one covers it.
+        d.rounded_rectangle(front, radius=3 * k, fill=(0, 0, 0, 0))
+        d.rounded_rectangle(front, radius=3 * k, outline=ink, width=line)
+        if state == "search":
+            # Gaps in the outline read as a dashed frame.
+            gap = (0, 0, 0, 0)
+            for x in (20, 27, 34):
+                d.rectangle([x * k, 13 * k, (x + 3) * k, 15.5 * k], fill=gap)
+                d.rectangle([x * k, 31.5 * k, (x + 3) * k, 34 * k], fill=gap)
+            for y in (19.5, 26):
+                d.rectangle([13 * k, y * k, 15.5 * k, (y + 2.5) * k], fill=gap)
+                d.rectangle([39.5 * k, y * k, 42 * k, (y + 2.5) * k], fill=gap)
+    d.rectangle([26 * k, 33 * k, 29 * k, 37 * k], fill=ink)
+    d.rounded_rectangle([21 * k, 37 * k, 34 * k, 40 * k], radius=1 * k, fill=ink)
     return img
 
 
@@ -53,7 +73,8 @@ def main():
         m.resize((size, size), Image.LANCZOS).save(os.path.join(icons, name))
     m.save(os.path.join(icons, "icon.icns"))
     m.save(os.path.join(icons, "icon.ico"), sizes=[(32, 32), (256, 256)])
-    template(44).save(os.path.join(icons, "tray.png"))
+    for state, name in [("live", "tray.png"), ("idle", "tray-idle.png"), ("search", "tray-search.png"), ("off", "tray-off.png")]:
+        template(44, state).save(os.path.join(icons, name))
 
 
 if __name__ == "__main__":

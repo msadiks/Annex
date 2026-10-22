@@ -63,7 +63,7 @@ contributions right now.
    on the PC. Type it into the Annex window on the Mac (menu bar icon ›
    *Pair with a PC…*).
 5. **Plug in a monitor:** turn a monitor on in the PC tray menu, the Mac menu
-   bar menu or the Mac window. Within a second the Mac shows a new display. Arrange it
+   bar popover or the Mac window. Within a second the Mac shows a new display. Arrange it
    in System Settings › Displays like any other monitor.
 
 From then on both apps reconnect by themselves whenever they're on the same
@@ -74,14 +74,16 @@ network. Turn on *Start at login* on both sides to make it permanent.
 - **PC tray menu:** tick monitors on or off, pick *Mode* (Auto / Sharp / Fast)
   and *Source* (*Extend* as a new Mac display, or *Mirror* one of the Mac's
   displays), and toggle the stats overlay (also `Ctrl+Shift+F12`).
-- **Mac menu bar menu:** each PC monitor has a submenu with the same
-  settings and its live frame rate, bitrate and latency.
-- **Mac window** (menu bar icon › *Open Annex…*): the same per-monitor
-  settings, live stats (frame rate, bitrate, loss, estimated latency),
-  pointer drawing and login options.
+- **Mac menu bar popover** (click the menu bar icon): the PC's live bitrate,
+  latency and loss, and a card per PC monitor with an on/off switch. Click a
+  card for its settings and live stats.
+- **Mac window** (menu bar icon › *Open Annex…*): a picture of the Mac and
+  the PC's monitors; click a monitor for its settings and live stats (frame
+  rate, bitrate, loss, estimated latency). *Connection* shows the PC and the
+  link, and *Preferences* has pointer drawing and the login option.
 - **Mirroring without black bars:** a Mac screen and a PC monitor of
   different shapes leave black bars on the PC. Set the monitor's *Mirror
-  shape* to *Match the PC monitor* on the Mac, and while it mirrors, the Mac
+  shape* to *Match the PC* on the Mac, and while it mirrors, the Mac
   takes the monitor's shape instead: the PC is filled, and the Mac's own
   screen gets the bars.
 - If the network drops, the Mac keeps the display for 30 seconds so your
