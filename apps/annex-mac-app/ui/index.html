@@ -44,7 +44,12 @@
   <footer>
     <p id="message" class="hint"></p>
     <p id="peer" class="hint"></p>
-    <button id="forget" class="link" hidden>Forget this PC</button>
+    <div id="forget-box" hidden>
+      <button id="forget" class="link">Forget this PC</button>
+      <span id="forget-confirm" hidden>Forget <strong id="forget-name"></strong>? You'll need to pair again.
+        <button id="forget-yes" class="danger">Forget</button>
+        <button id="forget-no" class="link">Cancel</button></span>
+    </div>
     <button id="repair" class="link" hidden>Pair with a different PC</button>
     <p id="version" class="hint"></p>
   </footer>

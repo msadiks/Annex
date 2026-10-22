@@ -54,7 +54,12 @@ function renderMonitors(v) {
             <option value="fast"${m.mode === 'fast' ? ' selected' : ''}>Fast (video, motion)</option>
           </select></label>
           <label>Shows <select data-k="source">${mirrorOpts(m.source)}</select></label>
+          ${m.source === 'extend' ? '' : `<label>Mirror shape <select data-k="match">
+            <option value="fit"${m.mirror_match ? '' : ' selected'}>Fit, with black bars on the PC</option>
+            <option value="match"${m.mirror_match ? ' selected' : ''}>Match the PC monitor (best as your main screen)</option>
+          </select></label>`}
         </div>
+        ${m.source === 'extend' ? '' : `<div class="stats">Match is sharper and fills the PC monitor, and your Mac's own screen gets the bars instead. Best when the PC monitor is your main screen.</div>`}
         ${m.enabled ? streamLine(s) : ''}
       </div>`;
     })
@@ -98,7 +103,8 @@ function render(v) {
   $('peer').textContent = v.paired_name
     ? `Paired PC: ${v.paired_name}${v.receiver_gpu ? ` (${v.receiver_gpu})` : ''}`
     : '';
-  $('forget').hidden = !v.paired_name;
+  $('forget-box').hidden = !v.paired_name;
+  $('forget-name').textContent = v.paired_name || '';
   $('repair').hidden = !v.paired_name || showPairing;
   $('version').textContent = `Annex ${v.version}`;
 }
@@ -115,10 +121,14 @@ $('monitors').addEventListener('change', async (e) => {
   const row = e.target.closest('.monitor');
   if (!row) return;
   const k = e.target.dataset.k;
-  const args = { id: row.dataset.id, enabled: null, mode: null, source: null };
-  args[k] = k === 'enabled' ? e.target.checked : e.target.value;
   e.target.blur();
-  await invoke('set_monitor', args);
+  if (k === 'match') {
+    await invoke('set_mirror_match', { id: row.dataset.id, on: e.target.value === 'match' });
+  } else {
+    const args = { id: row.dataset.id, enabled: null, mode: null, source: null };
+    args[k] = k === 'enabled' ? e.target.checked : e.target.value;
+    await invoke('set_monitor', args);
+  }
   setTimeout(refresh, 300);
 });
 
@@ -136,13 +146,22 @@ $('pair-form').addEventListener('submit', async (e) => {
 });
 
 $('cursor').addEventListener('change', (e) => invoke('set_client_cursor', { on: e.target.checked }));
-$('autostart').addEventListener('change', (e) => invoke('set_autostart', { on: e.target.checked }).catch(alert));
+$('autostart').addEventListener('change', (e) =>
+  invoke('set_autostart', { on: e.target.checked }).catch((err) => {
+    $('message').textContent = `Could not change the login item: ${err}`;
+  }));
 $('perm-open').addEventListener('click', () => invoke('open_screen_recording_settings'));
-$('forget').addEventListener('click', async () => {
-  if (confirm('Forget this PC? You will need to pair again.')) {
-    await invoke('forget');
-    refresh();
-  }
+// The web view has no confirm() dialog, so Forget asks inline.
+function askForget(open) {
+  $('forget').hidden = open;
+  $('forget-confirm').hidden = !open;
+}
+$('forget').addEventListener('click', () => askForget(true));
+$('forget-no').addEventListener('click', () => askForget(false));
+$('forget-yes').addEventListener('click', async () => {
+  askForget(false);
+  await invoke('forget');
+  refresh();
 });
 $('repair').addEventListener('click', () => {
   showPairing = true;

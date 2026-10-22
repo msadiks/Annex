@@ -25,6 +25,10 @@ pub struct StreamRequest {
     /// Stable virtual display slot for this monitor (identity, spec 3.3).
     pub slot: u32,
     pub source: StreamSource,
+    /// Mirror only: show the Mac display through a virtual display of the
+    /// picture size, so it takes the PC monitor's shape instead of being
+    /// fitted with black bars.
+    pub match_mirror: bool,
     /// Picture size (before Sharp doubling).
     pub width: u32,
     pub height: u32,

@@ -28,6 +28,16 @@ pub fn virtual_display_identity(receiver_id: &str, monitor_index: u32) -> (u32, 
     (VENDOR_ID, product, serial.max(1))
 }
 
+/// Identity of the virtual display a Mac display mirrors when a mirrored
+/// monitor is set to match the PC monitor's shape. Kept apart from the extend
+/// identities so macOS never brings a mirror arrangement back onto an
+/// extended display.
+pub fn mirror_display_identity(receiver_id: &str, monitor_index: u32) -> (u32, u32, u32) {
+    let product = 0xB000 + (monitor_index & 0x0FFF);
+    let serial = fnv1a64(&[receiver_id.as_bytes(), &monitor_index.to_be_bytes(), b"mirror"]) as u32;
+    (VENDOR_ID, product, serial.max(1))
+}
+
 /// Stable per-monitor id on Windows: friendly name plus EDID identity when
 /// available, else the device path.
 pub fn monitor_id(friendly_name: &str, edid: Option<(u16, u16, u32)>, device_path: &str) -> u64 {
