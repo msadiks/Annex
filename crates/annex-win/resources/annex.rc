@@ -12,7 +12,7 @@ BEGIN
     BLOCK "040904b0"
     BEGIN
       VALUE "CompanyName", "Annex"
-      VALUE "FileDescription", "Annex receiver"
+      VALUE "FileDescription", "Annex"
       VALUE "FileVersion", "1.0.0"
       VALUE "ProductName", "Annex"
       VALUE "ProductVersion", "1.0.0"

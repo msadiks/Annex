@@ -73,7 +73,7 @@ body:
     attributes:
       label: Logs
       description: |
-        PC: tray menu › Open log folder. Mac: `~/Library/Logs/Annex/annex.log`. Paste the part around the problem from both, or attach the files.
+        PC: Annex window or tray menu › Open log folder. Mac: `~/Library/Logs/Annex/annex.log`. Paste the part around the problem from both, or attach the files.
         Remove anything private (names, paths, IP addresses you don't want public) first.
       render: text
   - type: textarea

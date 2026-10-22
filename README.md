@@ -40,40 +40,61 @@ contributions right now.
 
 - **Mac:** Apple silicon, macOS 13 or later.
 - **PC:** Windows 10 or 11, 64-bit, with a GPU that decodes HEVC (NVIDIA GTX
-  950 / AMD RX 400 / Intel 6th gen or newer).
+  950 / AMD RX 400 / Intel 6th gen or newer). The Annex window uses the
+  Microsoft Edge WebView2 Runtime, which Windows 11 and up-to-date Windows 10
+  already have; without it Annex still runs from the tray and offers the
+  download.
 - Both on the same network. Wired Ethernet on at least one side gives the
   lowest latency; 5 GHz Wi-Fi works.
 
 ## Install and connect
 
-1. Download `Annex.exe` and `Annex-mac-arm64.dmg` from the
-   [latest release](https://github.com/msadiks/annex-app/releases/latest).
-2. **PC:** run `Annex.exe`. It lives in the system tray (the monitor icon).
+1. From the [latest release](https://github.com/msadiks/annex-app/releases/latest),
+   download `Annex-mac-arm64.dmg` for the Mac and, for the PC, either
+   `Annex-windows-x64-setup.exe` (installer) or
+   `Annex-windows-x64-portable.zip` (no install).
+2. **PC:** run the installer, or unzip the portable folder anywhere (a USB
+   stick works) and run `Annex.exe` in it. The Annex window opens, and Annex
+   also lives in the system tray (the monitor icon).
    - Windows may show a SmartScreen warning for a new app: choose
      *More info → Run anyway*.
-   - When Windows Firewall asks, allow Annex on **private** networks. If you
-     missed the prompt, use *Allow through Windows Firewall…* in the tray menu.
-     Annex uses TCP 48800 and UDP 48801.
+   - Setup installs Annex for your Windows account. When you click
+     *Install*, Windows asks for permission once, so setup can add a Windows
+     Firewall rule for Annex: private networks, plus public networks for
+     devices on your local subnet only. Annex uses TCP 48800 and UDP 48801.
+   - The portable copy has no installer, so allow it when Windows Firewall
+     asks. If the firewall still blocks the Mac (for example on a network
+     Windows marks *Public*), the Annex window shows a banner with a button
+     to fix it.
+   - The portable copy keeps its settings and logs in a `data` folder next to
+     `Annex.exe` and writes nothing else to the PC.
 3. **Mac:** open the .dmg and drag Annex to Applications, then open it. Its
    window opens, and it stays in the menu bar when you close the window.
    - Allow **Screen Recording** when macOS asks (System Settings › Privacy &
      Security › Screen Recording), then quit and reopen Annex.
    - Allow **Local Network** access when asked.
-4. **Pair once:** in the PC tray menu choose *Pair with a Mac…*. A PIN appears
-   on the PC. Type it into the Annex window on the Mac (menu bar icon ›
-   *Pair with a PC…*).
-5. **Plug in a monitor:** turn a monitor on in the PC tray menu, the Mac menu
-   bar popover or the Mac window. Within a second the Mac shows a new display. Arrange it
-   in System Settings › Displays like any other monitor.
+4. **Pair once:** in the Annex window on the PC choose *Pair with your Mac*
+   (or *Pair with a Mac…* in the tray menu). A PIN appears on the PC. Type it
+   into the Annex window on the Mac (menu bar icon › *Pair with a PC…*).
+5. **Plug in a monitor:** turn a monitor on in the Annex window on either
+   side, the PC tray menu or the Mac menu bar popover. Within a second the
+   Mac shows a new display. Arrange it in System Settings › Displays like any
+   other monitor.
 
 From then on both apps reconnect by themselves whenever they're on the same
-network. Turn on *Start at login* on both sides to make it permanent.
+network. Turn on *Start with Windows* on the PC and *Start at login* on the
+Mac to make it permanent.
 
 ## Everyday use
 
-- **PC tray menu:** tick monitors on or off, pick *Mode* (Auto / Sharp / Fast)
-  and *Source* (*Extend* as a new Mac display, or *Mirror* one of the Mac's
-  displays), and toggle the stats overlay (also `Ctrl+Shift+F12`).
+- **PC window:** left-click the tray icon (or open Annex again) to show it.
+  Turn monitors on or off, pick *Mode* (Auto / Sharp / Fast) and *Source*
+  (*Extend* as a new Mac display, or *Mirror* one of the Mac's displays), see
+  live stats per monitor, pair or forget the Mac, and set *Start with
+  Windows* and the stats overlay (also `Ctrl+Shift+F12`). Closing the window
+  keeps Annex running in the tray; *Quit Annex* stops it.
+- **PC tray menu:** right-click the tray icon for the same monitor settings
+  in a menu.
 - **Mac menu bar popover** (click the menu bar icon): the PC's live bitrate,
   latency and loss, and a card per PC monitor with an on/off switch. Click a
   card for its settings and live stats.
@@ -91,9 +112,11 @@ network. Turn on *Start at login* on both sides to make it permanent.
 
 ## Troubleshooting
 
-- **The Mac can't find the PC:** both must be on the same subnet, and the
-  firewall must allow Annex on private networks. Check that the PC's network
-  is set to *Private* in Windows settings.
+- **The Mac can't find the PC:** both must be on the same subnet, and Windows
+  Firewall must let Annex in. The PC's Annex window shows a yellow banner when
+  it doesn't (no rule, a block rule, or a network Windows marks *Public*);
+  use its button to allow Annex, or set the network to *Private* in Windows
+  Settings. The tray menu shows *Windows Firewall is blocking your Mac* too.
 - **Black screen on the PC:** the PC shows black when the Mac is gone for 2 s
   (no signal). Make sure the Mac app is running and Screen Recording is
   allowed.
@@ -101,11 +124,13 @@ network. Turn on *Start at login* on both sides to make it permanent.
   periodic re-confirmation for apps that capture the screen. Approve it. Known
   workarounds exist (for example the *Amnesia* app, or editing the `replayd`
   plist), but they are unsupported.
-- **Logs:** PC: tray menu › *Open log folder* (`%LOCALAPPDATA%\Annex\logs`).
-  Mac: `~/Library/Logs/Annex/annex.log`. Set `ANNEX_LOG=debug` for more
-  detail.
-- **Reset:** delete `%APPDATA%\Annex\config.toml` on the PC or
-  `~/Library/Application Support/Annex/config.toml` on the Mac and pair again.
+- **Logs:** PC: *Open log folder* in the Annex window or tray menu
+  (`%LOCALAPPDATA%\Annex\logs`, or `data\logs` next to a portable
+  `Annex.exe`). Mac: `~/Library/Logs/Annex/annex.log`. Set `ANNEX_LOG=debug`
+  for more detail.
+- **Reset:** delete `%APPDATA%\Annex\config.toml` on the PC (`data\config.toml`
+  for the portable copy) or `~/Library/Application Support/Annex/config.toml`
+  on the Mac and pair again.
 
 Still stuck? [Open a bug report](https://github.com/msadiks/annex-app/issues/new/choose)
 with both logs attached.
@@ -127,10 +152,10 @@ in [docs/spec.md](docs/spec.md).
 | `crates/annex-core` | Resolution rules, mode negotiation, stats, config. Platform independent. |
 | `crates/annex-sender` | Sender engine: sessions, streams, packetizing and pacing. Platform independent. |
 | `crates/annex-mac` | Mac capture and encode: virtual displays, ScreenCaptureKit, Metal, VideoToolbox. Also `annex-mac-cli` for testing. |
-| `crates/annex-win` | Windows receiver, the single `Annex.exe`. |
+| `crates/annex-win` | Windows receiver: `Annex.exe`, its tray menu and its window (WebView2, page in `ui/`). |
 | `crates/annex-testsrc` | Test sender that plays pre-encoded HEVC, so the PC side can be checked without a Mac. |
 | `apps/annex-mac-app` | Mac menu bar app (Tauri 2) around `annex-mac`. |
-| `tools/` | FFmpeg build, icon generation, Mac release script. |
+| `tools/` | FFmpeg build, icon generation, Windows installer and packaging, Mac release script. |
 | `docs/` | Design spec, measurements, release process. |
 
 ## Building from source
@@ -152,7 +177,14 @@ tools/ffmpeg/build-mingw.sh            # HEVC decoder + D3D11VA only
 cargo build --release --target x86_64-pc-windows-gnu -p annex-win
 ```
 
-The result is a single `annex.exe` that needs only system DLLs.
+The result is a single `annex.exe` that needs only system DLLs and the
+WebView2 Runtime (its loader DLL is built in). To make the installer and the
+portable zip in `dist/`:
+
+```sh
+sudo apt install nsis zip
+tools/windows/package.sh
+```
 
 **Mac sender** (`crates/annex-mac`) and app (`apps/annex-mac-app`, Tauri 2),
 on an Apple silicon Mac:
