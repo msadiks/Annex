@@ -11,7 +11,7 @@ use objc2_core_graphics::{
     CGBeginDisplayConfiguration, CGCancelDisplayConfiguration, CGCompleteDisplayConfiguration,
     CGConfigureDisplayMirrorOfDisplay, CGConfigureDisplayOrigin, CGConfigureOption, CGDisplayBounds, CGDisplayConfigRef,
     CGDisplayIsActive, CGDisplayIsBuiltin, CGDisplayIsMain, CGDisplayMirrorsDisplay, CGDisplayModelNumber,
-    CGDisplayVendorNumber, CGError, CGGetActiveDisplayList, CGGetOnlineDisplayList, CGMainDisplayID,
+    CGDisplayUnitNumber, CGDisplayVendorNumber, CGError, CGGetActiveDisplayList, CGGetOnlineDisplayList, CGMainDisplayID,
 };
 
 #[link(name = "ColorSync", kind = "framework")]
@@ -36,13 +36,19 @@ pub fn active_ids() -> Vec<u32> {
 }
 
 /// Like [`active_ids`], but also displays that only mirror another one.
-fn online_ids() -> Vec<u32> {
+pub fn online_ids() -> Vec<u32> {
     let mut ids = [0u32; 32];
     let mut n = 0u32;
     unsafe {
         CGGetOnlineDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut n);
     }
     ids[..n as usize].to_vec()
+}
+
+/// Whether another online display has display `id`'s unit number.
+pub fn shares_unit(id: u32) -> bool {
+    let unit = CGDisplayUnitNumber(id);
+    online_ids().into_iter().any(|o| o != id && CGDisplayUnitNumber(o) == unit)
 }
 
 /// The Annex mirror display that Mac display `id` mirrors, while it is
@@ -87,6 +93,7 @@ impl Mirrored {
             width: b.size.width as i32,
         };
         m.apply()?;
+        m.settle()?;
         Ok(m)
     }
 
@@ -121,6 +128,24 @@ impl Mirrored {
             Ok(())
         })?;
         tracing::info!(display = self.display, master = self.master, main = CGMainDisplayID(), "display mirroring changed");
+        Ok(())
+    }
+
+    /// Waits until the mirroring has held for a moment, restoring it while
+    /// macOS is still rearranging the displays.
+    pub fn settle(&self) -> anyhow::Result<()> {
+        let until = Instant::now() + Duration::from_secs(4);
+        let mut held_since = Instant::now();
+        while Instant::now() < until {
+            if !self.holds() {
+                tracing::info!(display = self.display, master = self.master, "macOS changed the display mirroring; restoring it");
+                self.apply()?;
+                held_since = Instant::now();
+            } else if held_since.elapsed() >= Duration::from_millis(800) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
         Ok(())
     }
 

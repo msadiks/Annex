@@ -1,11 +1,21 @@
 <p align="center">
-  <img src="assets/icon-1024.png" width="112" alt="">
+  <img src="assets/icon-1024.png" width="128" alt="">
 </p>
 
 <h1 align="center">Annex</h1>
 
 <p align="center">
-  Use a Windows PC's monitors as extra displays for your Mac, over your local network.
+  <b>More screens for your Mac. You already own them.</b><br>
+  Annex turns the monitors on your Windows PC into extra displays for your
+  Mac, wirelessly, over your own network. Free and open source.
+</p>
+
+<p align="center">
+  <a href="https://github.com/msadiks/annex-app/releases/latest"><b>Download for Mac and Windows</b></a>
+  &nbsp;·&nbsp;
+  <a href="#get-started-in-a-minute">Get started</a>
+  &nbsp;·&nbsp;
+  <a href="#why-annex">Why Annex</a>
 </p>
 
 <p align="center">
@@ -14,29 +24,60 @@
   <a href="#licence"><img src="https://img.shields.io/badge/licence-MIT%20or%20Apache--2.0-blue" alt="Licence: MIT or Apache-2.0"></a>
 </p>
 
-Annex behaves like a cable would, minus the cable: turn a PC monitor on in
-Annex and the Mac sees a new display; turn it off and the display is
-unplugged. It's free and open source, and it works entirely on your own
-network, with no account, cloud service or relay.
+---
 
-- **Sharp** mode sends exact colour (4:4:4) for text and UI, **Fast** mode is
-  plain 4:2:0 for video and motion. The first display gets Sharp, others Fast,
-  and you can pin either per monitor.
-- Up to three PC monitors at once, each as its own Mac display, or mirroring a
-  Mac display.
-- Hardware HEVC on both ends (VideoToolbox on the Mac, D3D11VA on the PC),
-  forward error correction, and encryption for everything on the wire.
-- LAN only. Nothing leaves your network.
+Your PC's monitor is sitting right there, and your MacBook is squinting at
+one small screen. Open Annex on both, turn the monitor on, and within a second
+macOS sees a brand-new display. Drag windows onto it, arrange it in System
+Settings, use it like any other screen. Turn it off and it's unplugged.
 
-## Project status
+No cable. No dongle. No subscription. No account.
 
-Annex 1.0 is the first public release. It has only been tested on a handful of
-machines so far, so expect rough edges on other hardware, and please
-[report what you find](https://github.com/msadiks/annex-app/issues/new/choose).
-Results from GPUs and Macs we haven't tried are one of the most useful
-contributions right now.
+## Why Annex
 
-## Requirements
+- **It behaves like a real cable.** macOS sees a real display, not an app
+  window. Your windows stay put, even if the network drops for up to 30
+  seconds.
+- **Text stays razor sharp.** *Sharp* mode sends full 4:4:4 colour, so code,
+  documents and UI look the same on the PC monitor as on your Mac. *Fast*
+  mode keeps video and motion smooth at 60 fps. Annex picks the right one for
+  each monitor, or you choose.
+- **Fast enough to forget it's wireless.** Hardware HEVC on both ends. In our
+  tests on 5 GHz Wi-Fi, an extended display runs at 60 fps with an estimated
+  10–13 ms from capture to screen.
+- **Up to three monitors.** Each PC monitor becomes its own Mac display, or
+  mirrors one of yours, and a mirror can fill the monitor without black bars.
+- **Private by design.** Annex only talks to your own devices on your local
+  network. No cloud, no relay, no tracking. Everything on the wire is
+  encrypted, and only the Mac you paired with a PIN can connect.
+- **Set it up once.** Type a 6-digit PIN the first time. After that, both
+  sides find each other and reconnect on their own.
+- **Free, and yours to change.** Open source under MIT or Apache-2.0.
+
+## Who it's for
+
+- You work on a Mac but have a Windows PC with good monitors on the same desk.
+- Your gaming PC's big screen sits idle while you work on your MacBook.
+- You want a second (or third, or fourth) screen for your Mac without buying
+  one.
+
+## Get started in a minute
+
+1. **Download** Annex for both machines from the
+   [latest release](https://github.com/msadiks/annex-app/releases/latest).
+2. **Open it** on the PC and on the Mac, and type the PIN the PC shows into
+   the Mac. You only do this once.
+3. **Turn a monitor on.** Your Mac has a new display.
+
+The [step-by-step guide](#install-and-connect) below covers permissions,
+firewall prompts and the portable Windows version.
+
+> **Early days:** Annex is new and has only been tested on a handful of
+> machines so far. If something doesn't work on yours,
+> [tell us](https://github.com/msadiks/annex-app/issues/new/choose): reports
+> from new hardware make Annex better for everyone.
+
+## What you need
 
 - **Mac:** Apple silicon, macOS 13 or later.
 - **PC:** Windows 10 or 11, 64-bit, with a GPU that decodes HEVC (NVIDIA GTX
