@@ -68,18 +68,18 @@ contributions right now.
      to fix it.
    - The portable copy keeps its settings and logs in a `data` folder next to
      `Annex.exe` and writes nothing else to the PC.
-3. **Mac:** open the .dmg and drag Annex to Applications, then open it. It
-   lives in the menu bar.
+3. **Mac:** open the .dmg and drag Annex to Applications, then open it. Its
+   window opens, and it stays in the menu bar when you close the window.
    - Allow **Screen Recording** when macOS asks (System Settings › Privacy &
      Security › Screen Recording), then quit and reopen Annex.
    - Allow **Local Network** access when asked.
 4. **Pair once:** in the Annex window on the PC choose *Pair with your Mac*
    (or *Pair with a Mac…* in the tray menu). A PIN appears on the PC. Type it
-   into the Annex window on the Mac (menu bar icon › *Open Annex…*; it opens
-   by itself until you've paired).
-5. **Plug in a monitor:** turn a monitor on in the Annex window on either side
-   (or tick it in the PC tray menu). Within a second the Mac shows a new
-   display. Arrange it in System Settings › Displays like any other monitor.
+   into the Annex window on the Mac (menu bar icon › *Pair with a PC…*).
+5. **Plug in a monitor:** turn a monitor on in the Annex window on either
+   side, the PC tray menu or the Mac menu bar menu. Within a second the Mac
+   shows a new display. Arrange it in System Settings › Displays like any
+   other monitor.
 
 From then on both apps reconnect by themselves whenever they're on the same
 network. Turn on *Start with Windows* on the PC and *Start at login* on the
@@ -95,8 +95,16 @@ Mac to make it permanent.
   keeps Annex running in the tray; *Quit Annex* stops it.
 - **PC tray menu:** right-click the tray icon for the same monitor settings
   in a menu.
-- **Mac window:** the same per-monitor settings, live stats (frame rate,
-  bitrate, loss, estimated latency), pointer drawing and login options.
+- **Mac menu bar menu:** each PC monitor has a submenu with the same
+  settings and its live frame rate, bitrate and latency.
+- **Mac window** (menu bar icon › *Open Annex…*): the same per-monitor
+  settings, live stats (frame rate, bitrate, loss, estimated latency),
+  pointer drawing and login options.
+- **Mirroring without black bars:** a Mac screen and a PC monitor of
+  different shapes leave black bars on the PC. Set the monitor's *Mirror
+  shape* to *Match the PC monitor* on the Mac, and while it mirrors, the Mac
+  takes the monitor's shape instead: the PC is filled, and the Mac's own
+  screen gets the bars.
 - If the network drops, the Mac keeps the display for 30 seconds so your
   windows don't move. After that it's unplugged until the PC is back.
 

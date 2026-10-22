@@ -3,6 +3,8 @@
 
 #[cfg(target_os = "macos")]
 mod app;
+#[cfg(target_os = "macos")]
+mod tray;
 
 #[cfg(target_os = "macos")]
 fn main() {

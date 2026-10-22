@@ -70,7 +70,7 @@ Examples: 1920×1080 → 1920×1080 · 1366×768 → 1366×768 · 2560×1440 →
 
 - Extend mode: the virtual display is created at exactly `stream_w × stream_h`, **60 Hz, one mode only, hiDPI off**. (See 6.2 for why only one mode.)
 - The receiver scales the stream to fill the panel (aspect is preserved by construction). Use a good upscale filter (bicubic or Lanczos) when sizes differ; blit directly when equal.
-- Mirror mode: capture the chosen Mac display, scale to fit the rule above (ScreenCaptureKit can scale during capture). If aspect ratios differ, the receiver letterboxes with black.
+- Mirror mode: capture the chosen Mac display, scale to fit the rule above (ScreenCaptureKit can scale during capture). If aspect ratios differ, the receiver letterboxes with black. Per monitor, the Mac can instead *match* the monitor: it creates a virtual display of the monitor's size and makes the Mac display mirror it (for as long as Annex runs), so the PC is filled and the Mac display is the one that gets bars. Only one monitor can match a given Mac display at a time.
 
 ### 3.2 Refresh
 Virtual displays are 60 Hz. The receiver presents each frame **the moment it is decoded** (sync interval 0, tearing allowed). A 120/144 Hz panel therefore reduces latency; it never causes judder handling logic on our side.
