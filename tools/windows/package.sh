@@ -30,8 +30,9 @@ between PCs or live on a USB drive. Delete this file to use the normal
 per-user folders instead (%APPDATA%\Annex and %LOCALAPPDATA%\Annex).
 
 When Annex first opens, Windows Firewall asks whether it may use the
-network. Allow it on private networks, or your Mac can't connect. If you
-missed the prompt, the Annex window offers to fix it.
+network. Allow it, or your Mac can't connect. If you missed the prompt, or
+the firewall still blocks your Mac (for example on a network Windows calls
+Public), the Annex window shows a banner with a button that fixes it.
 TXT
 sed -i 's/$/\r/' "$STAGE/Annex/portable.txt"
 rm -f "$DIST/Annex-windows-x64-portable.zip"
